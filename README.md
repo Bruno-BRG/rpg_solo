@@ -31,6 +31,20 @@ npx prisma migrate deploy
 npm run dev                   # http://localhost:3000
 ```
 
+### Local dev without Docker (Windows)
+
+`scripts/dev-postgres.ps1` manages a portable, user-space Postgres 16 with
+pgvector (no admin rights needed):
+
+```powershell
+powershell -File scripts\dev-postgres.ps1 setup   # one-time initdb
+powershell -File scripts\dev-postgres.ps1 start   # serve on 127.0.0.1:5433
+powershell -File scripts\dev-postgres.ps1 stop
+```
+
+Point `DATABASE_URL` at `postgresql://postgres:postgres@localhost:5433/rpg_solo?schema=public`.
+
+
 ## Deploy on Coolify
 
 1. Push this repo; in Coolify create a **Docker Compose** service pointing at it.
