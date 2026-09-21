@@ -1,0 +1,306 @@
+// ─────────────────────────────────────────────────────────────
+// RPG Solo — Prisma schema
+//
+// Domain overview:
+//   User            — authenticated player (multi-user, credentials auth)
+//   Campaign        — a solo campaign workspace (setting, chaos rank, scene)
+//   Setting         — campaign setting template / house rules source text
+//   Character       — Savage Worlds character sheet
+//   Scene           — a play session scene (oracle rolls, transcript)
+//   OracleLog       — every Mythic oracle query, human or AI driven
+//   Thread          — open plot thread tracked by the emulator
+//   StoryCharacter  — NPCs and story characters (distinct from PCs)
+//   JournalEntry    — AI-generated narrative journal of the story
+//   LoreChunk       — RAG chunk with pgvector embedding (per campaign)
+//   AiSettings      — per-user AI provider configuration
+// ─────────────────────────────────────────────────────────────
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ── Auth (Auth.js / NextAuth credentials) ────────────────────
+
+/// Platform user. All game content is owned by a user.
+model User {
+  id           String    @id @default(cuid())
+  email        String    @unique
+  passwordHash String
+  name         String?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  campaigns     Campaign[]
+  aiSettings    AiSettings?
+  accounts      Account[]
+  sessions      Session[]
+}
+
+/// Auth.js OAuth account link (future providers).
+model Account {
+  id                String  @id @default(cuid())
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String?
+  access_token      String?
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+}
+
+/// Auth.js session (only used if database sessions are enabled).
+model Session {
+  id           String   @id @default(cuid())
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+// ── Campaign domain ──────────────────────────────────────────
+
+/// A solo campaign: the top-level workspace tying setting, cast,
+/// scenes, journal and RAG lore together.
+model Campaign {
+  id          String   @id @default(cuid())
+  userId      String
+  name        String
+  /// Short genre/setting descriptor, e.g. "weird west", "space opera".
+  genre       String?
+  /// Mythic chaos rank: 1 (boring) … 9 (insane). Drives fate chart odds.
+  chaosRank   Int      @default(5)
+  /// Current scene description shown on the dashboard.
+  currentScene String?
+  /// Free-form setting notes / rules text also fed into RAG.
+  settingNotes String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  user       User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  characters Character[]
+  scenes     Scene[]
+  threads    Thread[]
+  storyChars  StoryCharacter[]
+  journal    JournalEntry[]
+  loreChunks LoreChunk[]
+
+  @@index([userId])
+}
+
+/// Reusable setting template: genre boilerplate, skill lists,
+/// house rules — pasteable source text for RAG ingestion.
+model Setting {
+  id        String   @id @default(cuid())
+  userId    String
+  name      String
+  /// Raw source text (rules, setting bible, pasted PDF text).
+  sourceText String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([userId])
+}
+
+/// Savage Worlds character sheet (PC or companion).
+model Character {
+  id          String   @id @default(cuid())
+  campaignId  String
+  name        String
+  /// Concept one-liner, e.g. "retired space marine medic".
+  concept     String?
+  ancestry    String?
+  /// Novice | Seasoned | Veteran | Heroic | Legendary
+  rank        String   @default("Novice")
+  /// Core attributes 1–12 (d4 step = 4 … d12 = 12).
+  agility     Int      @default(4)
+  smarts      Int      @default(4)
+  spirit      Int      @default(4)
+  strength    Int      @default(4)
+  vigor       Int      @default(4)
+  /// Skill map: { "Fighting": 8, "Notice": 4, ... } stored as JSON.
+  skills      Json     @default("{}")
+  /// Edge names array (JSON).
+  edges       Json     @default("[]")
+  /// Hindrance names array (JSON).
+  hindrances  Json     @default("[]")
+  /// Current bennies.
+  bennies     Int      @default(3)
+  /// Current wounds (0–3) and fatigue (0–2).
+  wounds      Int      @default(0)
+  fatigue     Int      @default(0)
+  /// Power points for arcane characters.
+  powerPoints Int      @default(0)
+  /// Free-form gear list.
+  gear        String?
+  /// Portrait-free visual identity: short description.
+  appearance  String?
+  /// Backstory text (also ingested into RAG).
+  background  String?
+  isDead      Boolean  @default(false)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  campaign Campaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+
+  @@index([campaignId])
+}
+
+/// A scene played in the campaign. Holds the transcript and
+/// scene-level Mythic state (altered scenes, complications).
+model Scene {
+  id         String   @id @default(cuid())
+  campaignId String
+  title      String
+  /// Scene type: Set | Altered | Interrupt (Mythic scene setup).
+  type       String   @default("Set")
+  /// Player-authored intent for the scene.
+  goal       String?
+  /// Rolling transcript of actions, rolls and narration.
+  transcript Json     @default("[]")
+  /// Scene complications raised by random events.
+  complications Json  @default("[]")
+  open       Boolean  @default(true)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  campaign  Campaign    @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  oracleLogs OracleLog[]
+
+  @@index([campaignId])
+}
+
+/// Every oracle consultation (fate chart, random event, detail
+/// check…) — whether asked by the human or the AI GM.
+model OracleLog {
+  id         String   @id @default(cuid())
+  sceneId    String
+  /// FateChart | RandomEvent | DetailCheck | SceneSetup | CustomTable
+  kind       String
+  /// The question asked or table context.
+  question   String
+  /// Mythic likelihood: AlmostCertain … AlmostImpossible
+  likelihood String?
+  /// Roll inputs and resolved answer, e.g. { rolls:[...], answer:"Yes" }
+  result     Json
+  /// Who asked: "player" or "ai".
+  askedBy    String   @default("player")
+  createdAt  DateTime @default(now())
+
+  scene Scene @relation(fields: [sceneId], references: [id], onDelete: Cascade)
+
+  @@index([sceneId])
+}
+
+/// Open plot thread tracked by the Mythic emulator.
+model Thread {
+  id         String   @id @default(cuid())
+  campaignId String
+  summary    String
+  /// Active | Resolved | Abandoned
+  status     String   @default("Active")
+  /// Thread complexity/tension 1–3 per Mythic.
+  tension    Int      @default(1)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  campaign Campaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+
+  @@index([campaignId, status])
+}
+
+/// Story characters / NPCs (distinct from playable Character sheets).
+model StoryCharacter {
+  id         String   @id @default(cuid())
+  campaignId String
+  name       String
+  description String?
+  /// Per Mythic: Neutral | Friendly | Hostile (can drift).
+  stance     String   @default("Neutral")
+  /// Alive | Dead | Gone
+  status     String   @default("Alive")
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  campaign Campaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+
+  @@index([campaignId])
+}
+
+/// AI-generated narrative journal — the campaign's running story.
+model JournalEntry {
+  id         String   @id @default(cuid())
+  campaignId String
+  sceneId    String?
+  /// Chapter/scene number for ordering the timeline.
+  order      Int      @default(0)
+  title      String
+  /// Full narrative entry (markdown).
+  body       String
+  /// One-paragraph recap used for cheap context injection.
+  summary    String?
+  createdAt  DateTime @default(now())
+
+  campaign Campaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+
+  @@index([campaignId, order])
+}
+
+// ── RAG ──────────────────────────────────────────────────────
+
+/// A chunk of campaign knowledge with a pgvector embedding.
+/// Vector search happens through raw SQL (Prisma `queryRaw`),
+/// since pgvector operations live outside the Prisma type layer.
+model LoreChunk {
+  id         String   @id @default(cuid())
+  campaignId String
+  /// Provenance: Journal | Character | SettingNotes | Rules | Scene
+  source     String
+  sourceId   String?
+  /// Ordered position within the source document.
+  chunkIndex Int      @default(0)
+  content    String
+  /// text-embedding-3-small produces 1536 dimensions.
+  embedding  Unsupported("vector(1536)")?
+  createdAt  DateTime @default(now())
+
+  campaign Campaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+
+  @@index([campaignId, source])
+}
+
+// ── AI configuration ─────────────────────────────────────────
+
+/// Per-user AI provider configuration.
+model AiSettings {
+  id             String  @id @default(cuid())
+  userId         String  @unique
+  /// "openai-api" (API key, pay per token) or
+  /// "chatgpt-oauth" (ChatGPT Plus subscription, Codex-style flow).
+  provider       String  @default("openai-api")
+  /// Chat model identifier, e.g. "gpt-4o", "gpt-5-codex".
+  chatModel      String  @default("gpt-4o")
+  /// API key stored server-side; never sent to the client.
+  apiKey         String?
+  /// OAuth tokens for the ChatGPT subscription flow.
+  oauthAccessToken  String?
+  oauthRefreshToken String?
+  oauthExpiresAt    DateTime?
+  /// GM persona system-prompt override.
+  gmPersona     String?
+  updatedAt     DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
