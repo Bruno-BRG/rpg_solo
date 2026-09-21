@@ -75,7 +75,7 @@ export function Workspace(props: WorkspaceProps) {
       {/* Panels */}
       <section className="flex-1 overflow-hidden">
         {tab === "Story" && (
-          <GmChat campaignId={props.campaignId} />
+          <GmChat campaignId={props.campaignId} onChaosChange={setChaosRank} />
         )}
         {tab === "Oracle" && (
           <OraclePanel campaignId={props.campaignId} openSceneId={props.openSceneId} chaosRank={chaosRank} />

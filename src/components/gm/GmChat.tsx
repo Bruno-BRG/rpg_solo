@@ -11,7 +11,13 @@ interface Turn {
   tools?: Array<{ name: string; result: unknown }>;
 }
 
-export function GmChat({ campaignId }: { campaignId: string }) {
+export function GmChat({
+  campaignId,
+  onChaosChange,
+}: {
+  campaignId: string;
+  onChaosChange?: (rank: number) => void;
+}) {
   const [turns, setTurns] = useState<Turn[]>([]);
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
@@ -26,14 +32,25 @@ export function GmChat({ campaignId }: { campaignId: string }) {
     const message = input.trim();
     if (!message || busy) return;
     setInput("");
+    await runTurn({ message });
+  }
+
+  /** Opening narration: the GM sets the scene up and starts the story. */
+  async function beginAdventure() {
+    if (busy) return;
+    await runTurn({ opening: true });
+  }
+
+  async function runTurn(payload: { message?: string; opening?: boolean }) {
     setBusy(true);
-    setTurns((t) => [...t, { role: "user", content: message }, { role: "assistant", content: "" }]);
+    const userLabel = payload.opening ? "Begin the adventure." : payload.message!;
+    setTurns((t) => [...t, { role: "user", content: userLabel }, { role: "assistant", content: "" }]);
 
     try {
       const res = await fetch("/api/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ campaignId, message }),
+        body: JSON.stringify({ campaignId, ...payload }),
       });
       if (!res.body) throw new Error("No stream");
 
@@ -73,6 +90,10 @@ export function GmChat({ campaignId }: { campaignId: string }) {
               copy[copy.length - 1] = { role: "assistant", content: data.content || assistantText, tools };
               return copy;
             });
+            // World-state effects (e.g. GM changed the chaos rank).
+            if (typeof data.effects?.chaosRank === "number") {
+              onChaosChange?.(data.effects.chaosRank);
+            }
           } else if (eventName === "error") {
             assistantText += `\n\n⚠️ ${data.message}`;
             setTurns((t) => {
@@ -105,9 +126,16 @@ export function GmChat({ campaignId }: { campaignId: string }) {
           <div className="panel p-6 text-center text-sm text-ink-500">
             <p className="font-serif text-lg text-ink-800">The table is set.</p>
             <p className="mt-1">
-              Describe what your character does. The GM narrates, rolls, and
-              consults the oracle when outcomes are uncertain.
+              Let the GM open the story with narration — or describe what
+              your character does to jump straight in.
             </p>
+            <button
+              className="btn-primary mt-4"
+              onClick={beginAdventure}
+              disabled={busy}
+            >
+              {busy ? "Opening…" : "Begin the adventure"}
+            </button>
           </div>
         )}
         {turns.map((turn, i) => (

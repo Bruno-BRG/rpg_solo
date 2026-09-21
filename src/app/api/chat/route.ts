@@ -1,14 +1,19 @@
 /**
  * POST /api/chat — AI Game Master turn (streaming).
  *
+ * Body: { campaignId, message? } for a normal turn, or
+ * { campaignId, opening: true } to have the GM open the adventure
+ * with scene setup + narration (no player input needed).
+ *
  * Streams text deltas as SSE-ish newline-delimited JSON, then a
- * final event with tool trace and persisted message id.
+ * final event with content, tool trace and world-state effects
+ * (e.g. a chaos rank change the UI should reflect).
  */
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import { createProvider, resolveProviderConfig } from "@/lib/ai/factory";
-import { runGmTurn } from "@/lib/gm/engine";
+import { runGmTurn, OPENING_DIRECTIVE } from "@/lib/gm/engine";
 
 export async function POST(request: Request) {
   const session = await getServerSession(authOptions);
@@ -17,12 +22,15 @@ export async function POST(request: Request) {
   }
 
   const body = await request.json().catch(() => null) as
-    | { campaignId?: string; message?: string }
+    | { campaignId?: string; message?: string; opening?: boolean }
     | null;
-  if (!body?.campaignId || !body?.message) {
-    return new Response(JSON.stringify({ error: "campaignId and message required" }), {
-      status: 400,
-    });
+  const playerInput =
+    body?.opening === true ? OPENING_DIRECTIVE : body?.message?.trim();
+  if (!body?.campaignId || !playerInput) {
+    return new Response(
+      JSON.stringify({ error: "campaignId and message (or opening: true) required" }),
+      { status: 400 },
+    );
   }
 
   // Campaign ownership check.
@@ -47,10 +55,14 @@ export async function POST(request: Request) {
           provider,
           session.user.id,
           body.campaignId!,
-          body.message!,
+          playerInput,
           (text) => send("delta", { text }),
         );
-        send("done", { content: result.content, toolTrace: result.toolTrace });
+        send("done", {
+          content: result.content,
+          toolTrace: result.toolTrace,
+          effects: result.effects,
+        });
       } catch (error) {
         send("error", { message: error instanceof Error ? error.message : String(error) });
       } finally {

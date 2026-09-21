@@ -6,7 +6,7 @@ A solo RPG platform: **Savage Worlds** rules engine, the **Mythic GM Emulator** 
 
 | Module | Description |
 |---|---|
-| **AI Game Master** | Streaming GM chat that narrates, rolls dice, consults the oracle and manages the story via tool calling. |
+| **AI Game Master** | Streaming GM chat that narrates, rolls dice, consults the oracle and manages the story via tool calling. Opens the adventure with narration on demand. |
 | **Savage Worlds engine** | Trait rolls with wild die and acing, derived stats (Pace/Parry/Toughness), ranks, guided character creation. |
 | **Mythic Oracle** | Fate chart with chaos rank, random events, detail checks (Action/Subject), scene setup — usable by player **and** AI. |
 | **Journal** | The GM writes narrative journal entries as you play; entries form the story timeline. |
@@ -59,15 +59,22 @@ The `Dockerfile` is a multi-stage build producing a slim standalone server; `/ap
 Set `OPENAI_API_KEY` (env var or per-user in **Settings → AI**). Pay per token; fully supported.
 
 ### ChatGPT Plus (Codex-style OAuth)
-Select **ChatGPT (Plus subscription)** in Settings. Requires OAuth client credentials on the server:
+Select **ChatGPT (Plus subscription)** in Settings, then click
+**Connect ChatGPT account**. The server starts a callback listener on
+`localhost:1455` (the only redirect URI registered for the Codex
+client id — the same port the Codex CLI uses), sends you to the
+OpenAI login, captures the token automatically and stores it
+per-user with automatic refresh.
 
-```
-CHATGPT_OAUTH_CLIENT_ID=…
-# optional override:
-CHATGPT_OAUTH_REDIRECT_URI=https://your-domain/api/ai/oauth/callback
-```
+If the local callback cannot be captured (port busy, headless
+server), copy the `http://localhost:1455/auth/callback?code=…` URL
+from the browser address bar after authorizing and paste it into the
+**Manual fallback** field in Settings.
 
-Click **Connect ChatGPT account** → authorize → tokens are stored per-user and refreshed automatically.
+Verified working models on a Plus account (Sept 2026 — gating is
+per-account, picked from a dropdown in Settings, no typing needed):
+`gpt-6-astra` (default), `gpt-5.6-sol`, `gpt-5.6-terra`,
+`gpt-5.6-luna`, `gpt-5.5`.
 
 > ⚠️ The ChatGPT subscription flow relies on undocumented endpoints (the same mechanism Codex clients use). It may break or be restricted; all logic is isolated in `src/lib/ai/chatgpt-oauth.ts`. The OpenAI API provider is the stable fallback.
 
@@ -114,6 +121,9 @@ src/
 
 ## Roadmap
 
+- [x] GM opens the adventure with narration ("Begin the adventure")
+- [x] GM owns the chaos rank, scenes and character conditions via tools
+- [x] Model picker dropdown per provider (no manual model ids)
 - [ ] Custom oracle tables (user-authored d100 tables)
 - [ ] Savage Worlds dramatic tasks & interludes
 - [ ] PDF rules ingestion for RAG

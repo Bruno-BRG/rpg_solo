@@ -20,6 +20,7 @@ import {
   buildAuthorizeUrl,
   exchangeCodeForTokens,
   CODEX_CLIENT_ID,
+  CHATGPT_DEFAULT_MODEL,
   OAUTH_REDIRECT_URI,
   type OAuthTokens,
 } from "./chatgpt-oauth";
@@ -90,10 +91,23 @@ async function handleCallbackRequest(
   res: http.ServerResponse,
 ): Promise<void> {
   const url = new URL(req.url ?? "/", OAUTH_REDIRECT_URI);
+
+  // Ignore anything that is not the OAuth callback itself
+  // (favicon, stray navigations). These have no OAuth params.
+  if (req.method !== "GET" || !url.pathname.startsWith("/auth/callback")) {
+    res.writeHead(404, { "Content-Type": "text/plain" });
+    res.end("Not found.");
+    return;
+  }
+
   const state = url.searchParams.get("state");
   const code = url.searchParams.get("code");
   const error = url.searchParams.get("error");
 
+  // Redirect back to the real app (NEXTAUTH_URL), NOT to this
+  // listener's own origin — a relative "/settings" would resolve
+  // to localhost:1455 and hit this handler again without params.
+  const appBase = (process.env.NEXTAUTH_URL || "http://localhost:3000").replace(/\/$/, "");
   const finish = (ok: boolean, message: string) => {
     res.writeHead(200, { "Content-Type": "text/html" });
     res.end(
@@ -101,7 +115,8 @@ async function handleCallbackRequest(
         `<body style="font-family:system-ui;padding:40px">` +
         `<h2>${ok ? "ChatGPT account connected" : "Connection failed"}</h2>` +
         `<p>${message}</p>` +
-        `<script>setTimeout(()=>location.replace("/settings"),2500)</script>`,
+        `<p><a href="${appBase}/settings">Back to Settings</a></p>` +
+        `<script>setTimeout(()=>location.replace("${appBase}/settings"),2500)</script>`,
     );
   };
 
@@ -164,7 +179,7 @@ export async function saveTokensForUser(
     create: {
       userId,
       provider: "chatgpt-oauth",
-      chatModel: "gpt-5-codex",
+      chatModel: CHATGPT_DEFAULT_MODEL,
       oauthAccessToken: tokens.accessToken,
       oauthRefreshToken: tokens.refreshToken,
       oauthExpiresAt: tokens.expiresAt ? new Date(tokens.expiresAt) : null,

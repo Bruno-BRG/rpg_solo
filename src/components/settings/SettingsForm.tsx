@@ -22,6 +22,11 @@ export function SettingsForm() {
   const [gmPersona, setGmPersona] = useState("");
   const [pastedUrl, setPastedUrl] = useState("");
   const [status, setStatus] = useState<string | null>(null);
+  // Model picker state.
+  const [models, setModels] = useState<string[]>([]);
+  const [modelSource, setModelSource] = useState<"live" | "catalog" | null>(null);
+  const [modelsLoading, setModelsLoading] = useState(false);
+  const [customModel, setCustomModel] = useState("");
 
   useEffect(() => {
     (async () => {
@@ -37,6 +42,25 @@ export function SettingsForm() {
       }
     })();
   }, []);
+
+  // Reload the model catalog whenever the provider changes.
+  useEffect(() => {
+    (async () => {
+      setModelsLoading(true);
+      try {
+        const res = await fetch(`/api/ai/models?provider=${provider}`);
+        if (res.ok) {
+          const data = await res.json();
+          setModels(data.models ?? []);
+          setModelSource(data.source ?? null);
+        }
+      } catch {
+        setModels([]);
+      } finally {
+        setModelsLoading(false);
+      }
+    })();
+  }, [provider]);
 
   async function completeManual() {
     setStatus(null);
@@ -107,9 +131,45 @@ export function SettingsForm() {
         <div className="space-y-3 p-4">
           <div>
             <label className="label">Chat model</label>
-            <input className="input" value={chatModel}
-              onChange={(e) => setChatModel(e.target.value)}
-              placeholder={provider === "chatgpt-oauth" ? "gpt-5-codex" : "gpt-4o"} />
+            {modelsLoading ? (
+              <p className="text-sm text-ink-500">Loading models…</p>
+            ) : (
+              <select
+                className="input"
+                value={models.includes(chatModel) ? chatModel : "__custom"}
+                onChange={(e) => {
+                  if (e.target.value === "__custom") {
+                    setChatModel(customModel || "");
+                  } else {
+                    setChatModel(e.target.value);
+                    setCustomModel("");
+                  }
+                }}
+              >
+                {models.map((m) => (
+                  <option key={m} value={m}>
+                    {m}
+                  </option>
+                ))}
+                <option value="__custom">Custom…</option>
+              </select>
+            )}
+            {(!models.includes(chatModel) || customModel) && !modelsLoading && (
+              <input
+                className="input mt-2 mono"
+                value={customModel || chatModel}
+                onChange={(e) => {
+                  setCustomModel(e.target.value);
+                  setChatModel(e.target.value);
+                }}
+                placeholder="type a model id, e.g. gpt-5.5"
+              />
+            )}
+            {modelSource === "catalog" && !modelsLoading && (
+              <p className="mt-1 text-xs text-ink-400">
+                Static catalog — pick Custom… to type any model id.
+              </p>
+            )}
           </div>
 
           {provider === "openai-api" && (

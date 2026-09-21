@@ -290,7 +290,7 @@ model AiSettings {
   /// "openai-api" (API key, pay per token) or
   /// "chatgpt-oauth" (ChatGPT Plus subscription, Codex-style flow).
   provider       String  @default("openai-api")
-  /// Chat model identifier, e.g. "gpt-4o", "gpt-5-codex".
+  /// Chat model identifier, e.g. "gpt-4o", "gpt-6-astra".
   chatModel      String  @default("gpt-4o")
   /// API key stored server-side; never sent to the client.
   apiKey         String?

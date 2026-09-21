@@ -56,6 +56,28 @@ const castSchema = z.object({
   stance: z.enum(["Neutral", "Friendly", "Hostile"]).optional(),
 });
 
+const chaosSchema = z.object({
+  rank: z.number().int().min(1).max(9).describe("New Mythic chaos rank (1=boring, 9=insane)"),
+  reason: z.string().describe("One-line reason for the change"),
+});
+
+const openSceneSchema = z.object({
+  title: z.string().describe("Scene title"),
+  goal: z.string().optional().describe("Player-authored intent (if known)"),
+});
+
+const closeSceneSchema = z.object({
+  reason: z.string().optional().describe("Why the scene ends"),
+});
+
+const updateCharacterSchema = z.object({
+  name: z.string().describe("Character name (matched case-insensitively)"),
+  bennies: z.number().int().min(0).max(10).optional(),
+  wounds: z.number().int().min(0).max(5).optional(),
+  fatigue: z.number().int().min(0).max(3).optional(),
+  powerPoints: z.number().int().min(0).max(100).optional(),
+});
+
 /** Map of tool name → Zod schema. */
 export const TOOL_SCHEMAS = {
   roll_dice: rollDiceSchema,
@@ -64,6 +86,10 @@ export const TOOL_SCHEMAS = {
   save_journal_entry: journalSchema,
   update_threads: threadSchema,
   update_cast: castSchema,
+  set_chaos_rank: chaosSchema,
+  open_scene: openSceneSchema,
+  close_scene: closeSceneSchema,
+  update_character: updateCharacterSchema,
 } as const;
 
 export type ToolName = keyof typeof TOOL_SCHEMAS;
@@ -93,6 +119,14 @@ const TOOL_DESCRIPTIONS: Record<ToolName, string> = {
     "Manage plot threads: add new ones, resolve, abandon, or list active ones (Mythic thread tracking).",
   update_cast:
     "Manage story characters (NPCs): add, update stance/description, or list the current cast.",
+  set_chaos_rank:
+    "Change the Mythic chaos rank (1–9). YOU own this dial: raise it when complications, danger or interruptions mount; lower it when threads resolve and calm returns.",
+  open_scene:
+    "Open a new scene (closes any currently open one). Use to start the adventure and to move the story forward after closing a scene.",
+  close_scene:
+    "Close the current scene. Always pair with save_journal_entry first so the chronicle is written.",
+  update_character:
+    "Update a player character sheet: spend/give bennies, apply wounds, fatigue or power points. You apply mechanical consequences — never ask the player to do it.",
 };
 
 /** Context passed to tool executors. */
@@ -139,7 +173,11 @@ export async function executeTool(
       return { ok: true, ...args };
     }
     case "update_threads":
-    case "update_cast": {
+    case "update_cast":
+    case "set_chaos_rank":
+    case "open_scene":
+    case "close_scene":
+    case "update_character": {
       // Same: the chat service applies mutations and returns state.
       return { ok: true, ...args };
     }
