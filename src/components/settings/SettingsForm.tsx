@@ -20,6 +20,7 @@ export function SettingsForm() {
   const [chatModel, setChatModel] = useState("gpt-4o");
   const [apiKey, setApiKey] = useState("");
   const [gmPersona, setGmPersona] = useState("");
+  const [pastedUrl, setPastedUrl] = useState("");
   const [status, setStatus] = useState<string | null>(null);
 
   useEffect(() => {
@@ -36,6 +37,33 @@ export function SettingsForm() {
       }
     })();
   }, []);
+
+  async function completeManual() {
+    setStatus(null);
+    const res = await fetch("/api/ai/oauth/exchange", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ callbackUrl: pastedUrl.trim() }),
+    });
+    if (res.ok) {
+      setPastedUrl("");
+      setStatus("ChatGPT account connected.");
+      // Reload the loaded settings state.
+      const r = await fetch("/api/settings/ai");
+      if (r.ok) {
+        const data = await r.json();
+        if (data.settings) {
+          setLoaded(data.settings);
+          setProvider(data.settings.provider);
+          setChatModel(data.settings.chatModel);
+          setGmPersona(data.settings.gmPersona ?? "");
+        }
+      }
+    } else {
+      const data = await res.json().catch(() => ({}));
+      setStatus(data.error ?? "Exchange failed.");
+    }
+  }
 
   async function save(e: React.FormEvent) {
     e.preventDefault();
@@ -99,13 +127,33 @@ export function SettingsForm() {
             <div className="border border-ink-300 bg-ink-50 p-3 text-xs text-ink-600">
               {loaded?.hasOAuth
                 ? "ChatGPT account connected."
-                : "Connect your ChatGPT account via the OAuth flow (Codex-style). Requires CHATGPT_OAUTH_CLIENT_ID on the server; connect from the button below once configured."}
+                : "Connect your ChatGPT account via the Codex-style OAuth flow. After authorizing, the local callback captures the token automatically."}
               <div className="mt-2">
-                <a className="btn-secondary inline-flex text-xs"
-                  href={`/api/ai/oauth/login`}>
+                <a className="btn-secondary inline-flex text-xs" href="/api/ai/oauth/login">
                   Connect ChatGPT account
                 </a>
               </div>
+              <details className="mt-3">
+                <summary className="cursor-pointer select-none text-[11px] uppercase tracking-wider text-ink-400">
+                  Manual fallback (paste callback URL)
+                </summary>
+                <div className="mt-2 flex gap-2">
+                  <input
+                    className="input"
+                    placeholder="http://localhost:1455/auth/callback?code=…"
+                    value={pastedUrl}
+                    onChange={(e) => setPastedUrl(e.target.value)}
+                  />
+                  <button type="button" className="btn-secondary text-xs" disabled={!pastedUrl.trim()}
+                    onClick={completeManual}>
+                    Complete
+                  </button>
+                </div>
+                <p className="mt-1">
+                  If the local callback fails (port busy, remote server), copy the URL
+                  from the browser address bar after authorizing and paste it here.
+                </p>
+              </details>
             </div>
           )}
 

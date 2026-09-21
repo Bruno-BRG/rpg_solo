@@ -298,6 +298,8 @@ model AiSettings {
   oauthAccessToken  String?
   oauthRefreshToken String?
   oauthExpiresAt    DateTime?
+  /// ChatGPT account id (from id_token) — required request header.
+  oauthAccountId    String?
   /// GM persona system-prompt override.
   gmPersona     String?
   updatedAt     DateTime @updatedAt

@@ -2,8 +2,12 @@
  * ChatGPT OAuth provider (Codex-style).
  *
  * Authenticates with a ChatGPT account (Plus subscription) using
- * the same OAuth 2.0 PKCE device/authorization flow the Codex CLI
- * uses, then exchanges the ChatGPT token for model access.
+ * the same OAuth 2.0 PKCE flow the Codex CLI uses, then calls the
+ * ChatGPT backend Responses API with the subscription token.
+ *
+ * Constants mirror the Codex CLI source (openai/codex,
+ * codex-rs/login): the client_id and the localhost:1455 redirect
+ * are from OpenAI's Hydra allow-list, so they must not change.
  *
  * ⚠️ Grey area: this relies on undocumented endpoints that may
  * change or be restricted. All ChatGPT-specific logic is isolated
@@ -18,9 +22,28 @@ import type {
   ToolCall,
 } from "./provider";
 
-/** OAuth endpoints (auth.openai.com — same host the Codex CLI uses). */
-const AUTH_BASE = "https://auth.openai.com";
-/** ChatGPT backend API base (undocumented; used by Codex-style clients). */
+/** OAuth endpoints — same issuer the Codex CLI uses. */
+const ISSUER = "https://auth.openai.com";
+const AUTHORIZE_ENDPOINT = `${ISSUER}/oauth/authorize`;
+const TOKEN_ENDPOINT = `${ISSUER}/oauth/token`;
+
+/** The client_id from the Codex CLI source (public allow-list). */
+export const CODEX_CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann";
+
+/** The ONLY redirect_uri registered for this client (port 1455). */
+export const OAUTH_REDIRECT_URI = "http://localhost:1455/auth/callback";
+
+/** Scopes requested by the Codex CLI. */
+const SCOPE = "openid profile email offline_access api.connectors.read api.connectors.invoke";
+
+/** Extra parameters Codex appends to the authorize URL. */
+const EXTRA_PARAMS: Array<[string, string]> = [
+  ["id_token_add_organizations", "true"],
+  ["codex_cli_simplified_flow", "true"],
+  ["originator", "codex_cli_rs"],
+];
+
+/** ChatGPT backend API base (undocumented; used by Codex clients). */
 const CHATGPT_API_BASE = "https://chatgpt.com/backend-api";
 
 /** Tokens issued by the OAuth flow. */
@@ -29,83 +52,71 @@ export interface OAuthTokens {
   refreshToken?: string;
   /** Epoch milliseconds. */
   expiresAt?: number;
+  /** ChatGPT account id (from the id_token) — required header. */
+  accountId?: string;
 }
 
-/** Browser-open URL the user must visit to authorize the app. */
+/** URL the user must open to authorize the app. */
 export interface AuthorizationRequest {
   url: string;
-  /** PKCE verifier to keep server-side until callback. */
-  verifier: string;
-  /** State parameter for CSRF protection. */
   state: string;
+  /** PKCE verifier — keep server-side until the code exchange. */
+  verifier: string;
 }
 
-/**
- * Build the authorization URL (PKCE + state).
- * Requires OAuth client credentials registered for the Codex flow.
- */
-export async function beginOAuth(
-  clientId: string,
-  redirectUri: string,
-): Promise<AuthorizationRequest> {
-  const verifier = randomToken(64);
-  const state = randomToken(16);
+/** Build the authorization URL (PKCE S256 + state + Codex extras). */
+export async function buildAuthorizeUrl(clientId: string): Promise<AuthorizationRequest> {
+  const verifier = randomToken(48);
+  const state = randomToken(32);
   const challenge = await pkceChallenge(verifier);
 
   const params = new URLSearchParams({
-    client_id: clientId,
-    redirect_uri: redirectUri,
     response_type: "code",
-    scope: "openid profile email offline_access",
+    client_id: clientId,
+    redirect_uri: OAUTH_REDIRECT_URI,
     code_challenge: challenge,
     code_challenge_method: "S256",
     state,
+    scope: SCOPE,
+    ...Object.fromEntries(EXTRA_PARAMS),
   });
 
   return {
-    url: `${AUTH_BASE}/authorize?${params.toString()}`,
-    verifier,
+    url: `${AUTHORIZE_ENDPOINT}?${params.toString()}`,
     state,
+    verifier,
   };
 }
 
-/** Exchange the authorization code for tokens. */
-export async function completeOAuth(
+/** Exchange an authorization code for tokens (returns verifier separately). */
+export async function exchangeCodeForTokens(
   clientId: string,
   code: string,
   verifier: string,
-  redirectUri: string,
 ): Promise<OAuthTokens> {
-  const res = await fetch(`${AUTH_BASE}/oauth/token`, {
+  const res = await fetch(TOKEN_ENDPOINT, {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
     body: new URLSearchParams({
       client_id: clientId,
       code,
       code_verifier: verifier,
-      redirect_uri: redirectUri,
+      redirect_uri: OAUTH_REDIRECT_URI,
       grant_type: "authorization_code",
     }),
   });
-  if (!res.ok) throw new Error(`OAuth token exchange failed: ${res.status}`);
-  const data = (await res.json()) as {
-    access_token: string;
-    refresh_token?: string;
-    expires_in?: number;
-  };
-  return {
-    accessToken: data.access_token,
-    refreshToken: data.refresh_token,
-    expiresAt: data.expires_in ? Date.now() + data.expires_in * 1000 : undefined,
-  };
+  if (!res.ok) {
+    throw new Error(`OAuth token exchange failed: ${res.status} ${await res.text()}`);
+  }
+  return tokensFromResponse(await res.json());
 }
 
 /** Refresh an expired access token. */
-export async function refreshOAuth(
+export async function refreshOAuthTokens(
   clientId: string,
   refreshToken: string,
 ): Promise<OAuthTokens> {
-  const res = await fetch(`${AUTH_BASE}/oauth/token`, {
+  const res = await fetch(TOKEN_ENDPOINT, {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
     body: new URLSearchParams({
@@ -114,17 +125,10 @@ export async function refreshOAuth(
       grant_type: "refresh_token",
     }),
   });
-  if (!res.ok) throw new Error(`OAuth refresh failed: ${res.status}`);
-  const data = (await res.json()) as {
-    access_token: string;
-    refresh_token?: string;
-    expires_in?: number;
-  };
-  return {
-    accessToken: data.access_token,
-    refreshToken: data.refresh_token ?? refreshToken,
-    expiresAt: data.expires_in ? Date.now() + data.expires_in * 1000 : undefined,
-  };
+  if (!res.ok) {
+    throw new Error(`OAuth refresh failed: ${res.status} ${await res.text()}`);
+  }
+  return tokensFromResponse(await res.json());
 }
 
 /** Provider implementation backed by ChatGPT OAuth tokens. */
@@ -136,17 +140,20 @@ export class ChatGptOAuthProvider implements AIProvider {
     private model = "gpt-5-codex",
   ) {}
 
-  /**
-   * ChatGPT backend responses endpoint. Mirrors the OpenAI
-   * Responses API shape loosely; adapted per current behavior.
-   */
+  /** ChatGPT backend Responses endpoint (Codex protocol). */
   async chat(options: ChatOptions): Promise<ChatResult> {
     const tokens = await this.getTokens();
+    if (!tokens.accountId) {
+      throw new Error("ChatGPT account id missing — reconnect the account.");
+    }
+
     const res = await fetch(`${CHATGPT_API_BASE}/codex/responses`, {
       method: "POST",
       headers: {
         Authorization: `Bearer ${tokens.accessToken}`,
+        "chatgpt-account-id": tokens.accountId,
         "Content-Type": "application/json",
+        originator: "codex_cli_rs",
       },
       body: JSON.stringify({
         model: options.model || this.model,
@@ -159,33 +166,74 @@ export class ChatGptOAuthProvider implements AIProvider {
     if (!res.ok) {
       throw new Error(`ChatGPT API error ${res.status}: ${await res.text()}`);
     }
-    const data = await res.json();
-    return parseResponsesPayload(data);
+    return parseResponsesPayload(await res.json());
   }
 
+  /**
+   * Streaming: the backend supports SSE, but for resilience the
+   * non-streaming path is used and emitted as a single chunk.
+   */
   async *streamChat(
     options: ChatOptions,
   ): AsyncGenerator<{ content?: string; toolCalls?: ToolCall[] }, void, unknown> {
-    // Streaming for the ChatGPT backend uses SSE; for resilience the
-    // non-streaming path is used and emitted as a single chunk.
     const result = await this.chat(options);
     if (result.content) yield { content: result.content };
     if (result.toolCalls) yield { toolCalls: result.toolCalls };
   }
 
+  /** Known models available through the subscription flow. */
   async listModels(): Promise<string[]> {
-    // Known models available through the subscription flow.
-    return ["gpt-5-codex", "gpt-5", "gpt-4.1", "o4-mini"];
+    return ["gpt-5-codex", "gpt-5", "gpt-5.1", "gpt-4.1", "o4-mini"];
   }
 }
 
 // ── Helpers ──────────────────────────────────────────────────
 
+/** Normalize a token endpoint response. */
+function tokensFromResponse(data: {
+  access_token: string;
+  refresh_token?: string;
+  expires_in?: number;
+  id_token?: string;
+}): OAuthTokens {
+  return {
+    accessToken: data.access_token,
+    refreshToken: data.refresh_token,
+    expiresAt: data.expires_in ? Date.now() + data.expires_in * 1000 : undefined,
+    accountId: data.id_token ? extractChatgptAccountId(data.id_token) : undefined,
+  };
+}
+
+/**
+ * Extract the chatgpt account id from the id_token JWT. The claim
+ * lives either at the top level or under `https://api.openai.com/auth`.
+ */
+function extractChatgptAccountId(idToken: string): string | undefined {
+  try {
+    const payload = JSON.parse(
+      Buffer.from(idToken.split(".")[1], "base64url").toString("utf8"),
+    ) as Record<string, unknown>;
+    const nested = payload["https://api.openai.com/auth"] as
+      | { chatgpt_account_id?: string }
+      | undefined;
+    return (
+      (nested?.chatgpt_account_id as string | undefined) ??
+      (payload.chatgpt_account_id as string | undefined)
+    );
+  } catch {
+    return undefined;
+  }
+}
+
 /** Convert chat messages to the Responses API input shape. */
 function toResponsesInput(messages: ChatMessage[]) {
   return messages
     .filter((m) => m.role !== "system")
-    .map((m) => ({ role: m.role, content: m.content }));
+    .map((m) => ({
+      type: "message",
+      role: m.role === "tool" ? "user" : m.role,
+      content: [{ type: "input_text", text: m.content }],
+    }));
 }
 
 /** Extract content/tool calls from a Responses-style payload. */
@@ -215,7 +263,7 @@ function parseResponsesPayload(data: unknown): ChatResult {
   return { content, toolCalls: toolCalls.length ? toolCalls : undefined };
 }
 
-/** Random URL-safe token. */
+/** Random URL-safe token (hex). */
 function randomToken(bytes: number): string {
   const arr = new Uint8Array(bytes);
   crypto.getRandomValues(arr);

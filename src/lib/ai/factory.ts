@@ -9,7 +9,7 @@ import { PROVIDER_IDS, type AIProvider, type ProviderId } from "./provider";
 import { OpenAIApiProvider } from "./openai-api";
 import {
   ChatGptOAuthProvider,
-  refreshOAuth,
+  refreshOAuthTokens,
   type OAuthTokens,
 } from "./chatgpt-oauth";
 import { prisma } from "../db";
@@ -22,17 +22,17 @@ export interface ProviderConfig {
   oauthAccessToken?: string | null;
   oauthRefreshToken?: string | null;
   oauthExpiresAt?: Date | null;
+  oauthAccountId?: string | null;
 }
 
 /** Build a provider instance from a configuration record. */
 export function createProvider(config: ProviderConfig): AIProvider {
   switch (config.provider) {
     case "chatgpt-oauth": {
-      const provider = new ChatGptOAuthProvider(async () => {
-        const tokens = await ensureFreshTokens(config);
-        return tokens;
-      }, config.chatModel);
-      return provider;
+      return new ChatGptOAuthProvider(
+        () => ensureFreshTokens(config),
+        config.chatModel,
+      );
     }
     case "openai-api":
     default: {
@@ -47,34 +47,38 @@ export function createProvider(config: ProviderConfig): AIProvider {
   }
 }
 
-/** Persisted tokens that may need refreshing before use. */
+/**
+ * Return valid tokens: use the stored access token while fresh,
+ * otherwise refresh and persist the new one.
+ */
 async function ensureFreshTokens(config: ProviderConfig): Promise<OAuthTokens> {
   const expired =
     !config.oauthExpiresAt || config.oauthExpiresAt.getTime() < Date.now() + 60_000;
 
   if (!expired && config.oauthAccessToken) {
-    return { accessToken: config.oauthAccessToken };
+    return {
+      accessToken: config.oauthAccessToken,
+      accountId: config.oauthAccountId ?? undefined,
+    };
   }
 
   if (!config.oauthRefreshToken) {
-    throw new Error("ChatGPT session expired. Reconnect in Settings.");
+    throw new Error("ChatGPT session expired. Reconnect the account in Settings.");
   }
 
   const clientId = process.env.CHATGPT_OAUTH_CLIENT_ID;
   if (!clientId) throw new Error("CHATGPT_OAUTH_CLIENT_ID is not configured.");
 
-  const refreshed = await refreshOAuth(clientId, config.oauthRefreshToken);
+  const refreshed = await refreshOAuthTokens(clientId, config.oauthRefreshToken);
 
   // Persist refreshed tokens so subsequent requests reuse them.
   await prisma.aiSettings.updateMany({
-    where: {
-      oauthRefreshToken: config.oauthRefreshToken,
-      provider: "chatgpt-oauth",
-    },
+    where: { oauthRefreshToken: config.oauthRefreshToken, provider: "chatgpt-oauth" },
     data: {
       oauthAccessToken: refreshed.accessToken,
       oauthRefreshToken: refreshed.refreshToken,
       oauthExpiresAt: refreshed.expiresAt ? new Date(refreshed.expiresAt) : null,
+      oauthAccountId: refreshed.accountId,
     },
   });
 
@@ -96,6 +100,7 @@ export async function resolveProviderConfig(userId: string): Promise<ProviderCon
       oauthAccessToken: settings.oauthAccessToken,
       oauthRefreshToken: settings.oauthRefreshToken,
       oauthExpiresAt: settings.oauthExpiresAt,
+      oauthAccountId: settings.oauthAccountId,
     };
   }
 
