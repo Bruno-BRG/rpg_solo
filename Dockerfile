@@ -9,6 +9,9 @@
 FROM node:20-alpine AS deps
 WORKDIR /app
 COPY package.json package-lock.json* ./
+# prisma/ must exist here: the `postinstall` script runs `prisma generate`,
+# which needs schema.prisma.
+COPY prisma ./prisma
 RUN npm ci
 
 # ── Stage 2: build ───────────────────────────────────────────
@@ -20,6 +23,8 @@ COPY . .
 # (no engine connection during `prisma generate` / `next build`).
 ENV DATABASE_URL="postgresql://build:build@localhost:5432/build"
 ENV NEXT_TELEMETRY_DISABLED=1
+# Regenerate the client against the final schema copied above.
+RUN npx prisma generate
 RUN npm run build
 
 # ── Stage 3: runtime ─────────────────────────────────────────
