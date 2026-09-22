@@ -6,7 +6,8 @@ A solo RPG platform: **Savage Worlds** rules engine, the **Mythic GM Emulator** 
 
 | Module | Description |
 |---|---|
-| **AI Game Master** | Streaming GM chat that narrates, rolls dice, consults the oracle and manages the story via tool calling. Opens the adventure with narration on demand. Persists full chat history, replays it on reload and logs every AI oracle consultation. |
+| **AI Game Master** | Streaming GM chat that narrates, rolls dice, consults the oracle and manages the story via tool calling. Opens the adventure with narration on demand. Persists full chat history, replays it on reload and logs every AI oracle consultation. Narration renders as **markdown** (headings, lists, tables, bold). |
+| **Dark theme** | Full dark mode with one click in the sidebar (follows system preference by default, persisted per browser, no flash on load). |
 | **Savage Worlds engine** | Trait rolls with wild die and acing, derived stats (Pace/Parry/Toughness), ranks, guided character creation. |
 | **Combat** | Initiative deck (d6+d6 with jokers), attack vs Parry, damage vs Toughness (incl. extras), raises → +1d6 damage, Soak, Unshake. |
 | **Dramatic tasks** | SWADE timer with skill list, tokens per success/raise, round advancement, success/failure outcomes. |
