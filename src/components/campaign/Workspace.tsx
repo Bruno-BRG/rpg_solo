@@ -82,8 +82,9 @@ export function Workspace(props: WorkspaceProps) {
         </nav>
       </header>
 
-      {/* Panels */}
-      <section className="flex-1 overflow-hidden">
+      {/* Panels — each panel manages its own height; long panels
+          (Settings, Threads, Lore…) scroll here instead of being clipped. */}
+      <section className="flex-1 overflow-y-auto">
         {tab === "Story" && (
           <GmChat
             campaignId={props.campaignId}
