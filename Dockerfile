@@ -12,6 +12,11 @@
 # ── Stage 1: dependencies ────────────────────────────────────
 FROM node:20-slim AS deps
 WORKDIR /app
+# Prisma detects the OpenSSL variant by running `openssl version`; slim images
+# lack the CLI, so it would download the wrong schema-engine build.
+RUN apt-get update -y \
+  && apt-get install -y --no-install-recommends openssl \
+  && rm -rf /var/lib/apt/lists/*
 COPY package.json package-lock.json* ./
 # prisma/ must exist here: the `postinstall` script runs `prisma generate`,
 # which needs schema.prisma.
@@ -36,6 +41,11 @@ FROM node:20-slim AS runner
 WORKDIR /app
 ENV NODE_ENV=production
 ENV NEXT_TELEMETRY_DISABLED=1
+# Same as the deps stage: `prisma migrate deploy` on start detects the engine
+# variant through the openssl CLI.
+RUN apt-get update -y \
+  && apt-get install -y --no-install-recommends openssl \
+  && rm -rf /var/lib/apt/lists/*
 
 COPY --from=builder /app/public ./public
 COPY --from=builder --chown=node:node /app/.next/standalone ./
