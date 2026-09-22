@@ -19,6 +19,7 @@ A solo RPG platform: **Savage Worlds** rules engine, the **Mythic GM Emulator** 
 | **Journal** | The GM writes narrative journal entries as you play; entries form the story timeline. |
 | **RAG memory** | Setting notes, character backgrounds and journal entries are chunked, embedded (pgvector) and searchable by the GM. |
 | **Multi-user auth** | Email + password accounts (Auth.js, bcrypt, JWT sessions). |
+| **Per-campaign AI settings** | Model, GM style/persona and narrative temperature per campaign (fall back to user defaults); campaigns can be deleted with typed confirmation. |
 | **AI providers** | OpenAI API (official) or ChatGPT Plus subscription via Codex-style OAuth. |
 | **Test suite** | `npm run test` covers rules, tools, DB and a full GM loop with a fake provider; `npm run test:api` runs the HTTP end-to-end suite. |
 
