@@ -17,8 +17,9 @@ import { ThreadsPanel } from "@/components/campaign/ThreadsPanel";
 import { PartyPanel } from "@/components/campaign/PartyPanel";
 import { LorePanel } from "@/components/campaign/LorePanel";
 import { ChaosRankControl } from "@/components/campaign/ChaosRankControl";
+import { CampaignSettingsPanel, type CampaignSettings } from "@/components/campaign/CampaignSettings";
 
-const TABS = ["Story", "Oracle", "Tables", "Journal", "Threads & Cast", "Party", "Lore"] as const;
+const TABS = ["Story", "Oracle", "Tables", "Journal", "Threads & Cast", "Party", "Lore", "Settings"] as const;
 type Tab = (typeof TABS)[number];
 
 export interface WorkspaceProps {
@@ -30,6 +31,8 @@ export interface WorkspaceProps {
   openSceneId: string | null;
   /** Persisted conversation, oldest-first (ChatTurn rows). */
   chatTurns?: Turn[];
+  /** Per-campaign AI overrides (null = user global). */
+  aiConfig?: CampaignSettings;
 }
 
 export function Workspace(props: WorkspaceProps) {
@@ -108,6 +111,18 @@ export function Workspace(props: WorkspaceProps) {
           <PartyPanel campaignId={props.campaignId} key={refreshKey} />
         )}
         {tab === "Lore" && <LorePanel campaignId={props.campaignId} />}
+        {tab === "Settings" && (
+          <CampaignSettingsPanel
+            campaignId={props.campaignId}
+            initial={props.aiConfig ?? {
+              name: props.name,
+              genre: props.genre,
+              chatModel: null,
+              gmPersona: null,
+              temperature: null,
+            }}
+          />
+        )}
       </section>
     </div>
   );

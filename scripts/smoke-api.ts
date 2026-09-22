@@ -153,6 +153,27 @@ async function main() {
   }, sessionA);
   check("PATCH chaos rank", patched.data?.campaign?.chaosRank === 7);
 
+  // 5b. Per-campaign AI config (model / persona / temperature).
+  const cfgPatch = await req(`/api/campaigns/${campaignId}`, {
+    method: "PATCH",
+    body: JSON.stringify({ chatModel: "gpt-4o", gmPersona: "terse, dry humor", temperature: 1.1 }),
+  }, sessionA);
+  check("PATCH per-campaign AI config",
+    cfgPatch.data?.campaign?.chatModel === "gpt-4o" &&
+    cfgPatch.data?.campaign?.gmPersona === "terse, dry humor" &&
+    cfgPatch.data?.campaign?.temperature === 1.1,
+    JSON.stringify(cfgPatch.data),
+  );
+  const cfgGet = await req(`/api/campaigns/${campaignId}`, {}, sessionA);
+  check("GET returns AI config",
+    cfgGet.data?.campaign?.chatModel === "gpt-4o" && cfgGet.data?.campaign?.gmPersona === "terse, dry humor");
+  const cfgClear = await req(`/api/campaigns/${campaignId}`, {
+    method: "PATCH",
+    body: JSON.stringify({ chatModel: null, gmPersona: null }),
+  }, sessionA);
+  check("PATCH clears overrides (null → user global)",
+    cfgClear.data?.campaign?.chatModel === null && cfgClear.data?.campaign?.gmPersona === null);
+
   // 6. Story resources (threads, cast, scenes, tasks)
   const thread = await req(`/api/campaigns/${campaignId}/story`,
     json({ resource: "threads", summary: "Who robbed the train?", tension: 2 }), sessionA);

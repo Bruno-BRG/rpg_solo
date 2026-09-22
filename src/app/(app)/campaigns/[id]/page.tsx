@@ -30,6 +30,13 @@ export default async function CampaignPage({
       chaosRank={campaign.chaosRank}
       currentScene={campaign.currentScene}
       openSceneId={campaign.scenes[0]?.id ?? null}
+      aiConfig={{
+        name: campaign.name,
+        genre: campaign.genre,
+        chatModel: campaign.chatModel,
+        gmPersona: campaign.gmPersona,
+        temperature: campaign.temperature,
+      }}
       chatTurns={campaign.chatTurns
         .slice()
         .reverse()

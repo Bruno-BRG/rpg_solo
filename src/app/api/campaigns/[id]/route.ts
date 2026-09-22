@@ -42,6 +42,10 @@ const UpdateCampaign = z.object({
   chaosRank: z.number().int().min(1).max(9).optional(),
   currentScene: z.string().max(2000).optional(),
   settingNotes: z.string().max(50_000).optional(),
+  /** Per-campaign AI config: null clears the override (fall back to user). */
+  chatModel: z.string().max(200).nullable().optional(),
+  gmPersona: z.string().max(20_000).nullable().optional(),
+  temperature: z.number().min(0).max(2).nullable().optional(),
 });
 
 /** PATCH — update campaign fields. */

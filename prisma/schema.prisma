@@ -90,6 +90,13 @@ model Campaign {
   currentScene String?
   /// Free-form setting notes / rules text also fed into RAG.
   settingNotes String?
+  /// Per-campaign AI config (overrides the user's global settings).
+  /// Chat model id for GM turns; empty/null = use the user's model.
+  chatModel   String?
+  /// Conversation style / GM persona override for this campaign.
+  gmPersona   String?
+  /// Narrative temperature for GM turns (0–2); default 0.8.
+  temperature Float?
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 

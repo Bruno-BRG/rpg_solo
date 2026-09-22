@@ -99,7 +99,9 @@ export async function runGmTurn(
     ),
     recentJournal: campaign.journal.map((j) => j.summary ?? j.title).reverse(),
     lore: loreHits.map((l) => l.content),
-    gmPersona: (await prisma.aiSettings.findUnique({ where: { userId } }))?.gmPersona,
+    // Campaign-level persona wins over the user's global one.
+    gmPersona: campaign.gmPersona ??
+      (await prisma.aiSettings.findUnique({ where: { userId } }))?.gmPersona,
   });
 
   // Conversation memory: prior turns replayed as plain dialogue.
@@ -139,10 +141,11 @@ export async function runGmTurn(
     let toolCalls: ToolCall[] | undefined;
 
     for await (const delta of provider.streamChat({
-      model: (await currentModel(userId)) || "gpt-4o",
+      // Campaign model wins; fall back to the user's global choice.
+      model: campaign.chatModel || (await currentModel(userId)) || "gpt-4o",
       messages,
       tools: toolDefinitions(),
-      temperature: 0.8,
+      temperature: campaign.temperature ?? 0.8,
     })) {
       if (delta.content) {
         turnContent += delta.content;
