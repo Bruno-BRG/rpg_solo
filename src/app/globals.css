@@ -4,11 +4,61 @@
 
 /* ── Design tokens ──────────────────────────────────────────
    Minimalist: flat neutrals, hairline borders, sharp corners.
-   No gradients. Single accent color for primary actions.     */
+   No gradients. Single accent color for primary actions.
+
+   Theme: all color tokens are CSS variables; `html.dark` swaps
+   the palette (near-inverted ink scale tuned for contrast), so
+   components keep the same class names in both themes.        */
 :root {
   --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
   --font-serif: "Source Serif 4", Georgia, serif;
   --font-mono: "JetBrains Mono", ui-monospace, monospace;
+
+  /* Light palette (default) */
+  --ink-50: #fafafa;
+  --ink-100: #f4f4f5;
+  --ink-200: #e4e4e7;
+  --ink-300: #d4d4d8;
+  --ink-400: #a1a1aa;
+  --ink-500: #71717a;
+  --ink-600: #52525b;
+  --ink-700: #3f3f46;
+  --ink-800: #27272a;
+  --ink-900: #18181b;
+  --ink-950: #09090b;
+
+  /* Surface colors: cards read "white" in light, rise from the
+     page background in dark. black is the inverted extreme. */
+  --c-white: #ffffff;
+  --c-black: #000000;
+
+  --accent-rgb: 185 28 28;       /* #b91c1c */
+  --accent-hover-rgb: 153 27 27; /* #991b1b */
+
+  color-scheme: light;
+}
+
+html.dark {
+  --ink-50: #09090b;
+  --ink-100: #131316;
+  --ink-200: #232328;
+  --ink-300: #3a3a41;
+  --ink-400: #70707a;
+  --ink-500: #94949c;
+  --ink-600: #b6b6bd;
+  --ink-700: #d4d4d8;
+  --ink-800: #e4e4e7;
+  --ink-900: #f4f4f5;
+  --ink-950: #fafafa;
+
+  --c-white: #16161a;
+  --c-black: #fafafa;
+
+  /* A touch brighter on dark so accent text/buttons stay vivid. */
+  --accent-rgb: 239 68 68;       /* #ef4444 */
+  --accent-hover-rgb: 220 38 38; /* #dc2626 */
+
+  color-scheme: dark;
 }
 
 body {
@@ -27,7 +77,9 @@ body {
     @apply inline-flex items-center justify-center gap-2 border px-3 py-1.5 text-sm font-medium transition-colors rounded-sm;
   }
   .btn-primary {
-    @apply btn border-accent bg-accent text-white hover:bg-accent-hover;
+    @apply btn border-accent bg-accent hover:bg-accent-hover;
+    /* Always white-on-red, in both themes. */
+    color: #fff;
   }
   .btn-secondary {
     @apply btn border-ink-300 bg-white text-ink-800 hover:bg-ink-100;

@@ -6,6 +6,7 @@ import Link from "next/link";
 import { signOut } from "next-auth/react";
 import { usePathname } from "next/navigation";
 import { Dices, Settings, Swords, Users } from "lucide-react";
+import { ThemeToggle } from "@/components/layout/ThemeToggle";
 
 const NAV = [
   { href: "/dashboard", label: "Campaigns", icon: Swords },
@@ -42,7 +43,8 @@ export function Sidebar({ user }: { user: { name?: string | null; email?: string
         })}
       </nav>
       <div className="border-t border-ink-200 px-4 py-3">
-        <p className="truncate text-xs text-ink-500">{user?.email}</p>
+        <ThemeToggle />
+        <p className="mt-2 truncate text-xs text-ink-500">{user?.email}</p>
         <button onClick={() => signOut({ callbackUrl: "/login" })} className="btn-ghost mt-2 w-full text-xs">
           Sign out
         </button>

@@ -8,6 +8,7 @@
  * to the workspace so the Oracle tab stays in sync.
  */
 import { useEffect, useRef, useState } from "react";
+import { Markdown } from "./Markdown";
 
 export interface Turn {
   role: "user" | "assistant";
@@ -176,7 +177,11 @@ export function GmChat({
                   GM
                 </span>
               )}
-              <p className="whitespace-pre-wrap">{turn.content || "…"}</p>
+              {turn.role === "assistant" ? (
+                <Markdown>{turn.content || "…"}</Markdown>
+              ) : (
+                <p className="whitespace-pre-wrap">{turn.content}</p>
+              )}
               {turn.tools && turn.tools.length > 0 && (
                 <div className="mt-2 flex flex-wrap gap-1">
                   {turn.tools.map((t, j) => (

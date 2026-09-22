@@ -4,6 +4,7 @@
  * the AI GM. Ordered entries form the story timeline.
  */
 import { useEffect, useState } from "react";
+import { Markdown } from "@/components/gm/Markdown";
 
 interface Entry {
   id: string;
@@ -78,9 +79,9 @@ export function JournalFeed({
             </div>
             <div className="p-6">
               <h2 className="font-serif text-2xl">{selected.title}</h2>
-              <p className="mt-4 whitespace-pre-wrap text-sm leading-relaxed">
-                {selected.body}
-              </p>
+              <div className="mt-4 text-sm leading-relaxed">
+                <Markdown>{selected.body}</Markdown>
+              </div>
             </div>
           </article>
         </div>

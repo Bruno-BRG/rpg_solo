@@ -5,6 +5,12 @@ import type { Config } from "tailwindcss";
  *
  * Design language: minimalist, utilitarian, high-contrast neutral palette.
  * No gradients, no heavy rounding — sharp edges and clear borders.
+ *
+ * Theming: every color is a CSS variable flipped by `html.dark` (see
+ * globals.css) — components keep using the same class names in both
+ * themes. The ink scale is a near-inversion tuned for contrast; accent
+ * is slightly brighter on dark. `white` is the card surface, `black` the
+ * inverted extreme.
  */
 const config: Config = {
   content: ["./src/**/*.{ts,tsx}"],
@@ -14,21 +20,25 @@ const config: Config = {
         // Neutral ink palette — the single accent is a restrained red,
         // used only for primary actions and danger states.
         ink: {
-          50: "#fafafa",
-          100: "#f4f4f5",
-          200: "#e4e4e7",
-          300: "#d4d4d8",
-          400: "#a1a1aa",
-          500: "#71717a",
-          600: "#52525b",
-          700: "#3f3f46",
-          800: "#27272a",
-          900: "#18181b",
-          950: "#09090b",
+          50: "var(--ink-50)",
+          100: "var(--ink-100)",
+          200: "var(--ink-200)",
+          300: "var(--ink-300)",
+          400: "var(--ink-400)",
+          500: "var(--ink-500)",
+          600: "var(--ink-600)",
+          700: "var(--ink-700)",
+          800: "var(--ink-800)",
+          900: "var(--ink-900)",
+          950: "var(--ink-950)",
         },
+        // Card/page surface + inverted extreme. Flips with the theme.
+        white: "var(--c-white)",
+        black: "var(--c-black)",
+        // Accent supports Tailwind opacity modifiers (/5 etc.).
         accent: {
-          DEFAULT: "#b91c1c",
-          hover: "#991b1b",
+          DEFAULT: "rgb(var(--accent-rgb) / <alpha-value>)",
+          hover: "rgb(var(--accent-hover-rgb) / <alpha-value>)",
         },
       },
       borderRadius: {
