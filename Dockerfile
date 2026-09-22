@@ -62,4 +62,6 @@ COPY --from=builder --chown=node:node /app/node_modules/.bin ./node_modules/.bin
 USER node
 EXPOSE 3000
 ENV PORT=3000
-CMD ["npm", "start"]
+# Next standalone ships `server.js` (dist/bin/next is stripped out), so the
+# server must be started with `node server.js`, not `next start`.
+CMD ["sh", "-c", "npx prisma migrate deploy && node server.js"]
