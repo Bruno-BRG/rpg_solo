@@ -4,7 +4,7 @@
  * scene setup, interludes and NPC generation. Every query is
  * logged to the open scene.
  */
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { fateOdds } from "@/lib/oracle/fate-chart";
 
 const LIKELIHOODS = [
@@ -27,6 +27,38 @@ type RandomEvent = { description: string };
 
 type OracleResult = FateResult | EventResult | DetailResult | SetupResult | InterludeResult | NpcResult;
 
+/** Shape of a persisted OracleLog row as returned by GET /api/oracle. */
+interface OracleLogEntry {
+  id?: string;
+  kind: string;
+  question: string;
+  result: Record<string, unknown>;
+  askedBy?: string;
+  createdAt: string;
+}
+
+/** One-line summary of an oracle answer for the history feed. */
+function summarize(kind: string, r: Record<string, unknown>): string {
+  switch (kind) {
+    case "FateChart":
+      return `${r.answer} (${r.roll} vs ${r.threshold})${r.randomEvent ? " ⚡" : ""}`;
+    case "RandomEvent":
+      return String(r.description ?? "");
+    case "DetailCheck":
+      return `${r.kind}: ${r.word}`;
+    case "SceneSetup":
+      return `${r.type} scene`;
+    case "Interlude":
+      return String(r.question);
+    case "Npc":
+      return `${(r.npc as Record<string, unknown> | undefined)?.name ?? ""}`;
+    case "Table":
+      return `[${r.roll}] ${r.text}`;
+    default:
+      return JSON.stringify(r).slice(0, 80);
+  }
+}
+
 export function OraclePanel({
   campaignId,
   openSceneId,
@@ -41,6 +73,20 @@ export function OraclePanel({
   const [last, setLast] = useState<{ kind: string; result: OracleResult } | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  /** Persisted consultation history (player + GM), newest first. */
+  const [history, setHistory] = useState<OracleLogEntry[]>([]);
+
+  /** Hydrate the persisted log so answers survive leaving the page. */
+  useEffect(() => {
+    if (!openSceneId) {
+      setHistory([]);
+      return;
+    }
+    fetch(`/api/oracle?sceneId=${openSceneId}`)
+      .then((r) => (r.ok ? r.json() : { logs: [] }))
+      .then((d) => setHistory(d.logs ?? []))
+      .catch(() => undefined);
+  }, [openSceneId]);
 
   async function ask(kind: string, extra: Record<string, unknown> = {}) {
     if (!openSceneId) {
@@ -62,6 +108,17 @@ export function OraclePanel({
     }
     const data = await res.json();
     setLast({ kind, result: data.result });
+    // Keep the persistent feed in sync (the POST already wrote OracleLog).
+    setHistory((h) => [
+      {
+        kind,
+        question: question || kind,
+        result: data.result,
+        askedBy: "player",
+        createdAt: new Date().toISOString(),
+      },
+      ...h,
+    ]);
   }
 
   const odds = fateOdds(likelihood, chaosRank);
@@ -124,6 +181,27 @@ export function OraclePanel({
           <div className="p-4">
             <ResultView kind={last.kind} result={last.result} />
           </div>
+        </div>
+      )}
+
+      {history.length > 0 && (
+        <div className="panel">
+          <div className="panel-header">Consultation log · this scene ({history.length})</div>
+          <ul className="divide-y divide-ink-200">
+            {history.slice(0, 25).map((log, i) => (
+              <li key={log.id ?? i} className="flex items-baseline justify-between gap-3 px-4 py-2 text-sm">
+                <span>
+                  <span className="tag mr-2">{log.kind}</span>
+                  <span className="text-ink-500">{log.question}</span>
+                  <span className="ml-2 font-serif">{summarize(log.kind, log.result)}</span>
+                </span>
+                <span className="mono whitespace-nowrap text-[10px] text-ink-400">
+                  {log.askedBy === "ai" ? "GM" : "you"} ·{" "}
+                  {new Date(log.createdAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+                </span>
+              </li>
+            ))}
+          </ul>
         </div>
       )}
     </div>

@@ -155,7 +155,11 @@ async function main() {
   // update_character overwrote to 2; assert only that XP is right and bennies ≤ 5).
   check("bennies within bounds", heroAfter.bennies >= 0 && heroAfter.bennies <= 5);
 
-  const oracleLogs = await prisma.oracleLog.findMany({ where: { sceneId: firstScene.id } });
+  // Oracle logs attach to the scene live at call time: tools run before the
+  // opening open_scene land on the initial scene, the rest on the new one.
+  const oracleLogs = await prisma.oracleLog.findMany({
+    where: { sceneId: { in: [firstScene.id, after.scenes.find((s) => s.title === "Smoke Scene")?.id ?? ""] } },
+  });
   const kinds = new Set(oracleLogs.map((l) => l.kind));
   check("AI oracle calls logged",
     ["FateChart", "RandomEvent", "CustomTable", "SceneSetup", "Interlude", "Npc"].every((k) => kinds.has(k)),

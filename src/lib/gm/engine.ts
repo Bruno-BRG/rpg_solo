@@ -76,7 +76,8 @@ export async function runGmTurn(
   });
   if (!campaign) throw new Error("Campaign not found");
 
-  const scene = campaign.scenes[0];
+  const sceneId = campaign.scenes[0]?.id ?? null;
+  const turnStartSceneId = sceneId;
 
   // ── Context assembly ──────────────────────────────────────
   const loreHits = await searchLore(campaignId, playerInput, 5);
@@ -124,7 +125,7 @@ export async function runGmTurn(
   const toolCtx: ToolContext = {
     campaignId,
     chaosRank: campaign.chaosRank,
-    sceneId: scene?.id,
+    sceneId,
     askedBy: "ai",
   };
 
@@ -172,12 +173,25 @@ export async function runGmTurn(
       toolTrace.push({ name: call.name, result });
 
       // Side-effects: journal/threads/cast/scenes/chaos persist here.
-      const effect = await applyToolSideEffects(call.name, call.arguments, campaignId, scene?.id);
+      // close_scene targets the scene that was open when the turn began —
+      // a model that opens and then closes within the same turn must not
+      // close the scene it just opened.
+      const effect = await applyToolSideEffects(
+        call.name,
+        call.arguments,
+        campaignId,
+        call.name === "close_scene" ? turnStartSceneId : toolCtx.sceneId,
+      );
       if (effect?.chaosRank !== undefined) effects.chaosRank = effect.chaosRank;
-      if (effect?.sceneId) effects.sceneId = effect.sceneId;
+      if (effect?.sceneId) {
+        effects.sceneId = effect.sceneId;
+        // A scene opened mid-turn becomes the live scene: oracle logs and
+        // later effects must attach to it, not to the stale (null) id.
+        toolCtx.sceneId = effect.sceneId;
+      }
 
       // AI oracle consultations join the story record too.
-      await logOracleCall(call.name, call.arguments, result, scene?.id);
+      await logOracleCall(call.name, call.arguments, result, toolCtx.sceneId);
 
       messages.push({
         role: "tool",

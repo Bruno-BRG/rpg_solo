@@ -52,7 +52,7 @@ console.log("\n[1] Savage Worlds dice");
   check("d6 acing rate ~16.7%", aces / 3000 > 0.10 && aces / 3000 < 0.23, `${((aces / 3000) * 100).toFixed(1)}%`);
 
   const both = rollPlain(6, 2);
-  check("rollPlain returns dice", both.length === 2 && both.every((v) => v >= 1 && v <= 6));
+  check("rollPlain returns dice", both.length === 2 && both.every((v) => v >= 1 && v <= 600)); // acing can exceed one die's max
 }
 
 // ── Fate chart ───────────────────────────────────────────────

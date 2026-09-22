@@ -37,6 +37,7 @@ export default async function DashboardPage() {
                   {c.genre ?? "No genre"}
                   {c.currentScene ? ` · Scene: ${c.currentScene}` : " · No scene yet"}
                 </p>
+                <p className="text-[11px] text-ink-400">last played {timeAgo(c.updatedAt)}</p>
               </div>
               <span className="tag">Chaos {c.chaosRank}</span>
             </div>
@@ -54,4 +55,16 @@ export default async function DashboardPage() {
       </div>
     </div>
   );
+}
+
+/** Compact relative time for the campaign list. */
+function timeAgo(date: Date): string {
+  const s = Math.floor((Date.now() - date.getTime()) / 1000);
+  if (s < 60) return "just now";
+  const m = Math.floor(s / 60);
+  if (m < 60) return `${m}m ago`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `${h}h ago`;
+  const d = Math.floor(h / 24);
+  return d < 30 ? `${d}d ago` : date.toLocaleDateString();
 }
