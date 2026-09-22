@@ -51,13 +51,21 @@ function pruneFlows(): void {
 }
 
 /**
+ * Effective OAuth client id. MUST be identical in the authorize URL and in
+ * the token exchange (the code is bound to the client id) — env override
+ * first, Codex default otherwise. Never an empty string.
+ */
+function effectiveClientId(): string {
+  return process.env.CHATGPT_OAUTH_CLIENT_ID || CODEX_CLIENT_ID;
+}
+
+/**
  * Create a pending authorization for a user.
  * Returns the URL to open in a browser.
  */
 export async function createFlow(userId: string): Promise<{ url: string; state: string }> {
   pruneFlows();
-  const clientId = process.env.CHATGPT_OAUTH_CLIENT_ID || CODEX_CLIENT_ID;
-  const { url, state, verifier } = await buildAuthorizeUrl(clientId);
+  const { url, state, verifier } = await buildAuthorizeUrl(effectiveClientId());
   flows.set(state, { userId, verifier, createdAt: Date.now() });
   return { url, state };
 }
@@ -132,7 +140,7 @@ async function handleCallbackRequest(
 
   try {
     const tokens = await exchangeCodeForTokens(
-      process.env.CHATGPT_OAUTH_CLIENT_ID || "",
+      effectiveClientId(),
       code,
       flow.verifier,
     );
@@ -161,7 +169,7 @@ export async function completeFromPastedUrl(
   if (!flow) throw new Error("Unknown or expired flow. Start again from Settings.");
 
   const tokens = await exchangeCodeForTokens(
-    process.env.CHATGPT_OAUTH_CLIENT_ID || "",
+    effectiveClientId(),
     code,
     flow.verifier,
   );

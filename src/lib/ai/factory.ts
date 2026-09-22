@@ -10,6 +10,7 @@ import { OpenAIApiProvider } from "./openai-api";
 import {
   ChatGptOAuthProvider,
   refreshOAuthTokens,
+  CODEX_CLIENT_ID,
   type OAuthTokens,
 } from "./chatgpt-oauth";
 import { prisma } from "../db";
@@ -66,8 +67,9 @@ async function ensureFreshTokens(config: ProviderConfig): Promise<OAuthTokens> {
     throw new Error("ChatGPT session expired. Reconnect the account in Settings.");
   }
 
-  const clientId = process.env.CHATGPT_OAUTH_CLIENT_ID;
-  if (!clientId) throw new Error("CHATGPT_OAUTH_CLIENT_ID is not configured.");
+  // Same client id as the authorize/exchange flow (env override, Codex
+  // default) — the refresh token is bound to it.
+  const clientId = process.env.CHATGPT_OAUTH_CLIENT_ID || CODEX_CLIENT_ID;
 
   const refreshed = await refreshOAuthTokens(clientId, config.oauthRefreshToken);
 
