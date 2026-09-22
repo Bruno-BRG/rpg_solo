@@ -76,8 +76,10 @@ export function rollTrait(
   const trait = rollDie(sides);
   const wild = rollDie(6);
 
-  const traitTotal = trait.total + mod;
-  const wildTotal = wild.total; // wild die never takes the d4-1 modifier
+  // Situational modifiers apply to the final total of EITHER die;
+  // only the d4-1 step penalty is trait-die specific.
+  const traitTotal = trait.total + stepModifier(traitStep) + modifier;
+  const wildTotal = wild.total + modifier;
 
   const usedTrait = traitTotal >= wildTotal;
   const total = usedTrait ? traitTotal : wildTotal;

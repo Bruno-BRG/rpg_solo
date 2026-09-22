@@ -1,11 +1,15 @@
 "use client";
 /**
  * GM chat — talk to the AI Game Master.
+ *
  * Consumes the SSE stream from /api/chat and renders deltas live.
+ * History hydrates from the persisted ChatTurn rows (survives
+ * reloads); world-state effects (chaos rank, new scene) propagate
+ * to the workspace so the Oracle tab stays in sync.
  */
 import { useEffect, useRef, useState } from "react";
 
-interface Turn {
+export interface Turn {
   role: "user" | "assistant";
   content: string;
   tools?: Array<{ name: string; result: unknown }>;
@@ -13,12 +17,18 @@ interface Turn {
 
 export function GmChat({
   campaignId,
+  initialTurns,
   onChaosChange,
+  onSceneChange,
+  onTurnDone,
 }: {
   campaignId: string;
+  initialTurns?: Turn[];
   onChaosChange?: (rank: number) => void;
+  onSceneChange?: (sceneId: string) => void;
+  onTurnDone?: () => void;
 }) {
-  const [turns, setTurns] = useState<Turn[]>([]);
+  const [turns, setTurns] = useState<Turn[]>(initialTurns ?? []);
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
@@ -52,6 +62,14 @@ export function GmChat({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ campaignId, ...payload }),
       });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(
+          typeof data.error === "string" && data.error
+            ? data.error
+            : `The GM is unavailable (HTTP ${res.status}).`,
+        );
+      }
       if (!res.body) throw new Error("No stream");
 
       // Parse the SSE stream manually.
@@ -90,10 +108,14 @@ export function GmChat({
               copy[copy.length - 1] = { role: "assistant", content: data.content || assistantText, tools };
               return copy;
             });
-            // World-state effects (e.g. GM changed the chaos rank).
+            // World-state effects (chaos dial, freshly opened scene).
             if (typeof data.effects?.chaosRank === "number") {
               onChaosChange?.(data.effects.chaosRank);
             }
+            if (typeof data.effects?.sceneId === "string") {
+              onSceneChange?.(data.effects.sceneId);
+            }
+            onTurnDone?.();
           } else if (eventName === "error") {
             assistantText += `\n\n⚠️ ${data.message}`;
             setTurns((t) => {
@@ -104,12 +126,14 @@ export function GmChat({
           }
         }
       }
-    } catch {
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : "Connection error — try again.";
       setTurns((t) => {
         const copy = [...t];
         copy[copy.length - 1] = {
           role: "assistant",
-          content: "⚠️ Connection error — try again.",
+          content: `⚠️ ${message}`,
         };
         return copy;
       });
@@ -156,8 +180,8 @@ export function GmChat({
               {turn.tools && turn.tools.length > 0 && (
                 <div className="mt-2 flex flex-wrap gap-1">
                   {turn.tools.map((t, j) => (
-                    <span key={j} className="tag">
-                      {t.name.replace(/_/g, " ")}
+                    <span key={j} className="tag" title={JSON.stringify(t.result)}>
+                      {formatToolCall(t.name, t.result)}
                     </span>
                   ))}
                 </div>
@@ -185,4 +209,62 @@ export function GmChat({
       </form>
     </div>
   );
+}
+
+/** Turn a tool result into a compact, readable chip label. */
+function formatToolCall(name: string, result: unknown): string {
+  const r = (result ?? {}) as Record<string, any>;
+  if (r.error) return `⚠ ${String(r.error).slice(0, 60)}`;
+
+  switch (name) {
+    case "roll_dice":
+      return `🎲 ${r.description ?? "roll"}: ${r.label} → ${r.total}${
+        r.criticalFailure ? " · CRIT FAIL" : r.raises > 0 ? ` · +${r.raises} raise` : ""
+      }${r.success ? " ✔" : " ✘"}`;
+    case "roll_damage":
+      return `⚔ ${r.summary ?? `${r.total} vs TN ${r.toughness}`}`;
+    case "roll_initiative":
+      return `Initiative: ${(r.round ?? []).map((e: any) => e.name).join(" > ")}`;
+    case "ask_oracle":
+      return `Oracle: ${r.answer} (${r.roll}/${r.threshold})${r.randomEvent ? " ⚡" : ""}`;
+    case "random_event":
+      return `⚡ Event: ${r.event?.description ?? ""}${r.event ? ` · ${r.event.focus}` : ""}`;
+    case "roll_table":
+      return `Table [${r.roll}]: ${r.text}`;
+    case "generate_npc":
+      return `NPC: ${r.npc?.name} (${r.npc?.stance})`;
+    case "run_interlude":
+      return `Interlude: ${r.interlude?.question ?? ""}`;
+    case "setup_scene":
+      return `Scene check: ${r.type}${r.applied ? " (applied)" : ""}`;
+    case "start_dramatic_task":
+      return `⏱ Task: ${r.name} (0/${r.requiredSuccesses}, ${r.timeLimit} rounds)`;
+    case "advance_dramatic_task":
+      return `⏱ ${r.skill} → +${r.roll?.raises ?? 0} tokens (${r.successes}/${r.requiredSuccesses})${r.status !== "running" ? ` · ${r.status}` : ""}`;
+    case "award_experience":
+      return `+${r.amount} XP → ${(r.awarded ?? []).map((c: any) => c.name).join(", ")}`;
+    case "save_journal_entry":
+      return `📜 Journal: ${r.title}`;
+    case "set_chaos_rank":
+      return `Chaos → ${r.rank}: ${r.reason}`;
+    case "open_scene":
+      return `Scene: ${r.title}`;
+    case "close_scene":
+      return `Scene closed${r.reason ? `: ${r.reason}` : ""}`;
+    case "update_threads":
+      return `Thread ${r.action}${r.summary ? `: ${r.summary}` : ""}`;
+    case "update_cast":
+      return `Cast ${r.action}${r.name ? `: ${r.name} (${r.stance ?? "Neutral"})` : ""}`;
+    case "update_character":
+      return `${r.name}: ${(
+        ["bennies", "wounds", "fatigue", "powerPoints"] as const
+      )
+        .filter((k) => r[k] !== undefined)
+        .map((k) => `${k}=${r[k]}`)
+        .join(" ")}`;
+    case "search_lore":
+      return `Memory: ${(r.results ?? []).length} hits`;
+    default:
+      return name.replace(/_/g, " ");
+  }
 }

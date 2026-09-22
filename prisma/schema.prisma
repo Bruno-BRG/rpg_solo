@@ -5,12 +5,15 @@
 //   User            — authenticated player (multi-user, credentials auth)
 //   Campaign        — a solo campaign workspace (setting, chaos rank, scene)
 //   Setting         — campaign setting template / house rules source text
-//   Character       — Savage Worlds character sheet
+//   Character       — Savage Worlds character sheet (with XP progression)
 //   Scene           — a play session scene (oracle rolls, transcript)
 //   OracleLog       — every Mythic oracle query, human or AI driven
 //   Thread          — open plot thread tracked by the emulator
 //   StoryCharacter  — NPCs and story characters (distinct from PCs)
 //   JournalEntry    — AI-generated narrative journal of the story
+//   ChatTurn        — persisted GM conversation (context memory)
+//   DramaticTask    — SWADE dramatic tasks (tokens vs the clock)
+//   CustomTable     — user-authored d100 tables
 //   LoreChunk       — RAG chunk with pgvector embedding (per campaign)
 //   AiSettings      — per-user AI provider configuration
 // ─────────────────────────────────────────────────────────────
@@ -36,6 +39,7 @@ model User {
   updatedAt    DateTime  @updatedAt
 
   campaigns     Campaign[]
+  customTables  CustomTable[]
   aiSettings    AiSettings?
   accounts      Account[]
   sessions      Session[]
@@ -95,6 +99,8 @@ model Campaign {
   threads    Thread[]
   storyChars  StoryCharacter[]
   journal    JournalEntry[]
+  chatTurns  ChatTurn[]
+  tasks      DramaticTask[]
   loreChunks LoreChunk[]
 
   @@index([userId])
@@ -141,6 +147,8 @@ model Character {
   /// Current wounds (0–3) and fatigue (0–2).
   wounds      Int      @default(0)
   fatigue     Int      @default(0)
+  /// Experience points (1 advance every 5 XP — see progression.ts).
+  xp          Int      @default(0)
   /// Power points for arcane characters.
   powerPoints Int      @default(0)
   /// Free-form gear list.
@@ -256,6 +264,71 @@ model JournalEntry {
   campaign Campaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
 
   @@index([campaignId, order])
+}
+
+/// A persisted GM conversation turn — the AI's short-term memory
+/// and the UI's chat history (survives page reloads).
+model ChatTurn {
+  id         String   @id @default(cuid())
+  campaignId String
+  /// "user" | "assistant"
+  role       String
+  /// Turn text (narration for the assistant, action for the player).
+  content    String
+  /// Tool calls executed during an assistant turn (JSON array).
+  toolTrace  Json?
+  createdAt  DateTime @default(now())
+
+  campaign Campaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+
+  @@index([campaignId, createdAt])
+}
+
+/// SWADE dramatic task: tokens earned vs the round clock.
+/// Skills/attempts are stored as JSON mirrors of
+/// `lib/rules/dramatic-tasks.ts` structures.
+model DramaticTask {
+  id         String   @id @default(cuid())
+  campaignId String
+  sceneId    String?
+  name       String
+  /// Allowed skills (JSON array of names).
+  skills     Json
+  /// Target number (default 4).
+  targetNumber Int    @default(4)
+  /// Tokens required to complete (SWADE default 10).
+  requiredSuccesses Int @default(10)
+  /// Tokens banked so far.
+  successes  Int      @default(0)
+  /// Rounds allowed / rounds used.
+  timeLimit  Int      @default(4)
+  timeUsed   Int      @default(0)
+  /// running | completed | failed
+  status     String   @default("running")
+  /// Attempt log (JSON array of { round, skill, raises, tokens }).
+  attempts   Json     @default("[]")
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  campaign Campaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+
+  @@index([campaignId, status])
+}
+
+/// User-authored d100 table, reusable across campaigns.
+model CustomTable {
+  id          String   @id @default(cuid())
+  userId      String
+  name        String
+  description String?
+  /// Equal-width d100 bands (JSON array of entry strings).
+  entries     Json
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
 }
 
 // ── RAG ──────────────────────────────────────────────────────

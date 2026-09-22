@@ -52,10 +52,9 @@ export function stepNotation(step: number): string {
 
 /** Derive rank from total advances (per SWADE advancement table). */
 export function rankFromAdvances(advances: number): Rank {
-  if (advances >= 20) return "Legendary";
-  if (advances >= 16) return "Heroic";
-  if (advances >= 12) return "Veteran";
-  if (advances >= 8) return "Veteran"; // safety clamp
+  if (advances >= 16) return "Legendary";
+  if (advances >= 12) return "Heroic";
+  if (advances >= 8) return "Veteran";
   if (advances >= 4) return "Seasoned";
   return "Novice";
 }

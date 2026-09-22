@@ -48,6 +48,41 @@ export async function GET(_request: Request, { params }: Params) {
   return NextResponse.json({ characters });
 }
 
+const CharacterPatch = z.object({
+  id: z.string().min(1),
+  xp: z.number().int().min(0).max(10_000).optional(),
+  bennies: z.number().int().min(0).max(10).optional(),
+  wounds: z.number().int().min(0).max(5).optional(),
+  fatigue: z.number().int().min(0).max(3).optional(),
+  powerPoints: z.number().int().min(0).max(100).optional(),
+  rank: z.enum(["Novice", "Seasoned", "Veteran", "Heroic", "Legendary"]).optional(),
+  isDead: z.boolean().optional(),
+});
+
+/** PATCH — quick sheet updates (XP awards, bennies, wounds…). */
+export async function PATCH(request: Request, { params }: Params) {
+  const session = await getServerSession(authOptions);
+  if (!session?.user?.id) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+
+  const campaign = await prisma.campaign.findFirst({
+    where: { id: params.id, userId: session.user.id },
+  });
+  if (!campaign) return NextResponse.json({ error: "Not found" }, { status: 404 });
+
+  const parsed = CharacterPatch.safeParse(await request.json().catch(() => null));
+  if (!parsed.success) return NextResponse.json({ error: "Invalid input" }, { status: 400 });
+
+  const { id, ...data } = parsed.data;
+  const updated = await prisma.character.updateMany({
+    where: { id, campaignId: params.id },
+    data,
+  });
+  if (updated.count === 0) return NextResponse.json({ error: "Not found" }, { status: 404 });
+
+  const character = await prisma.character.findUnique({ where: { id } });
+  return NextResponse.json({ character });
+}
+
 /** POST — create a character; background text is ingested into RAG. */
 export async function POST(request: Request, { params }: Params) {
   const session = await getServerSession(authOptions);
@@ -63,9 +98,7 @@ export async function POST(request: Request, { params }: Params) {
 
   const character = await prisma.character.create({
     data: { ...parsed.data, campaignId: params.id },
-  });
-
-  // Ingest background into campaign lore (best-effort).
+  });  // Ingest background into campaign lore (best-effort).
   if (parsed.data.background && process.env.OPENAI_API_KEY) {
     const { ingestDocument } = await import("@/lib/rag/lore");
     await ingestDocument(

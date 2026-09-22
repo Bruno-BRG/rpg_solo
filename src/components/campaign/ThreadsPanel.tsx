@@ -8,11 +8,28 @@ import { useEffect, useState } from "react";
 interface Thread { id: string; summary: string; status: string; tension: number; }
 interface Cast { id: string; name: string; description: string | null; stance: string; status: string; }
 interface Scene { id: string; title: string; type: string; open: boolean; }
+interface Task {
+  id: string;
+  name: string;
+  skills: string[];
+  successes: number;
+  requiredSuccesses: number;
+  timeLimit: number;
+  timeUsed: number;
+  status: string;
+}
 
-export function ThreadsPanel({ campaignId }: { campaignId: string }) {
+export function ThreadsPanel({
+  campaignId,
+  refreshKey = 0,
+}: {
+  campaignId: string;
+  refreshKey?: number;
+}) {
   const [threads, setThreads] = useState<Thread[]>([]);
   const [cast, setCast] = useState<Cast[]>([]);
   const [scenes, setScenes] = useState<Scene[]>([]);
+  const [tasks, setTasks] = useState<Task[]>([]);
   const [threadText, setThreadText] = useState("");
   const [castForm, setCastForm] = useState({ name: "", description: "", stance: "Neutral" });
   const [sceneTitle, setSceneTitle] = useState("");
@@ -24,10 +41,12 @@ export function ThreadsPanel({ campaignId }: { campaignId: string }) {
       setThreads(data.campaign.threads);
       setCast(data.campaign.storyChars);
       setScenes(data.campaign.scenes);
+      setTasks(data.campaign.tasks ?? []);
     }
   }
 
-  useEffect(() => { refresh(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [campaignId]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => { refresh(); }, [campaignId, refreshKey]);
 
   async function post(body: object) {
     await fetch(`/api/campaigns/${campaignId}/story`, {
@@ -92,6 +111,56 @@ export function ThreadsPanel({ campaignId }: { campaignId: string }) {
           ))}
           {threads.filter((t) => t.status === "Active").length === 0 && (
             <p className="text-sm text-ink-500">No active threads.</p>
+          )}
+        </ul>
+      </section>
+
+      {/* Dramatic tasks */}
+      <section>
+        <h2 className="mb-3 text-xs font-semibold uppercase tracking-widest text-ink-500">
+          Dramatic tasks
+        </h2>
+        <ul className="space-y-2">
+          {tasks.map((t) => {
+            const percent = Math.min(100, Math.round((t.successes / t.requiredSuccesses) * 100));
+            return (
+              <li key={t.id} className="panel px-3 py-2 text-sm">
+                <div className="flex items-center justify-between">
+                  <span className="font-semibold">{t.name}</span>
+                  <div className="flex items-center gap-2">
+                    <span
+                      className={`tag ${
+                        t.status === "completed"
+                          ? "border-green-700 text-green-700"
+                          : t.status === "failed"
+                            ? "border-accent text-accent"
+                            : ""
+                      }`}
+                    >
+                      {t.status}
+                    </span>
+                    <button className="text-ink-400 hover:text-accent" onClick={() => remove("tasks", t.id)}>×</button>
+                  </div>
+                </div>
+                <div className="mt-2 flex items-center gap-2">
+                  <div className="h-1.5 flex-1 bg-ink-100">
+                    <div
+                      className={`h-1.5 ${t.status === "failed" ? "bg-accent" : "bg-ink-700"}`}
+                      style={{ width: `${percent}%` }}
+                    />
+                  </div>
+                  <span className="mono text-xs text-ink-500">
+                    {t.successes}/{t.requiredSuccesses} · round {t.timeUsed}/{t.timeLimit}
+                  </span>
+                </div>
+                <p className="mt-1 text-xs text-ink-400">skills: {t.skills.join(", ")}</p>
+              </li>
+            );
+          })}
+          {tasks.length === 0 && (
+            <li className="text-sm text-ink-500">
+              No dramatic tasks. The GM starts one when the clock matters.
+            </li>
           )}
         </ul>
       </section>

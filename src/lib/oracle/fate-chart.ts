@@ -129,3 +129,17 @@ export function formatFateResult(r: FateChartResult): string {
   const event = r.randomEvent ? " ⚡ random event!" : "";
   return `${r.answer} (rolled ${r.roll} vs ${r.threshold}${event})`;
 }
+
+/**
+ * The adjusted "Yes" threshold for a likelihood at a given chaos
+ * rank — exposed so the UI can show the odds before rolling.
+ */
+export function fateThreshold(likelihood: Likelihood, chaosRank: number): number {
+  const clamped = Math.min(CHAOS_MAX, Math.max(CHAOS_MIN, chaosRank));
+  return Math.min(99, Math.max(2, BASE_THRESHOLDS[likelihood] + chaosAdjustment(clamped)));
+}
+
+/** Percentage chance of a "Yes" at the given likelihood/chaos. */
+export function fateOdds(likelihood: Likelihood, chaosRank: number): number {
+  return 100 - fateThreshold(likelihood, chaosRank) + 1;
+}

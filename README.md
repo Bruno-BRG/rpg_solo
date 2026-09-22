@@ -6,13 +6,20 @@ A solo RPG platform: **Savage Worlds** rules engine, the **Mythic GM Emulator** 
 
 | Module | Description |
 |---|---|
-| **AI Game Master** | Streaming GM chat that narrates, rolls dice, consults the oracle and manages the story via tool calling. Opens the adventure with narration on demand. |
+| **AI Game Master** | Streaming GM chat that narrates, rolls dice, consults the oracle and manages the story via tool calling. Opens the adventure with narration on demand. Persists full chat history, replays it on reload and logs every AI oracle consultation. |
 | **Savage Worlds engine** | Trait rolls with wild die and acing, derived stats (Pace/Parry/Toughness), ranks, guided character creation. |
+| **Combat** | Initiative deck (d6+d6 with jokers), attack vs Parry, damage vs Toughness (incl. extras), raises → +1d6 damage, Soak, Unshake. |
+| **Dramatic tasks** | SWADE timer with skill list, tokens per success/raise, round advancement, success/failure outcomes. |
+| **Interludes** | Mythic interlude questions per PC + world outlook check with chaos-rank drift; awards a benny. |
+| **Progression** | XP → advances → ranks (Novice → Legendary at 4/8/12/16), per-character XP tracking in the party panel. |
 | **Mythic Oracle** | Fate chart with chaos rank, random events, detail checks (Action/Subject), scene setup — usable by player **and** AI. |
+| **d100 tables** | 27 built-in tables across fantasy/scifi/western/horror/noir/universal + user-authored custom tables (CRUD, shareable, rollable by player and AI). |
+| **NPC generator** | Genre-aware NPC with name, occupation, appearance, demeanor, Motivation and Mythic stance (Friendly/Neutral/Hostile). |
 | **Journal** | The GM writes narrative journal entries as you play; entries form the story timeline. |
 | **RAG memory** | Setting notes, character backgrounds and journal entries are chunked, embedded (pgvector) and searchable by the GM. |
 | **Multi-user auth** | Email + password accounts (Auth.js, bcrypt, JWT sessions). |
 | **AI providers** | OpenAI API (official) or ChatGPT Plus subscription via Codex-style OAuth. |
+| **Test suite** | `npm run test` covers rules, tools, DB and a full GM loop with a fake provider; `npm run test:api` runs the HTTP end-to-end suite. |
 
 ## Stack
 
@@ -119,12 +126,28 @@ src/
 | `EMBEDDINGS_MODEL` | – | Default `text-embedding-3-small` |
 | `CHATGPT_OAUTH_CLIENT_ID` | – | ChatGPT subscription flow |
 
+## Testing
+
+```bash
+npm run test        # rules + tools + DB + full GM loop (fake provider)
+npm run test:rules  # individual suites: test:rules|tools|db|gm
+npm run typecheck   # tsc --noEmit
+npm run lint        # next lint
+npm run test:api    # HTTP end-to-end (needs `npm run dev` running)
+```
+
 ## Roadmap
 
 - [x] GM opens the adventure with narration ("Begin the adventure")
 - [x] GM owns the chaos rank, scenes and character conditions via tools
 - [x] Model picker dropdown per provider (no manual model ids)
-- [ ] Custom oracle tables (user-authored d100 tables)
-- [ ] Savage Worlds dramatic tasks & interludes
+- [x] Custom oracle tables (user-authored d100 tables)
+- [x] Savage Worlds dramatic tasks & interludes
+- [x] Combat subsystem (initiative, attack, damage, Soak, Unshake)
+- [x] Character progression (XP → advances → ranks) with party panel
+- [x] Genre NPC generator + built-in d100 table library
+- [x] Full chat history persistence and replay
 - [ ] PDF rules ingestion for RAG
 - [ ] Export journal as markdown/EPUB
+- [ ] Vehicle/chase rules (SWADE chase deck)
+- [ ] Quick Encounters / mass combat rules for extras

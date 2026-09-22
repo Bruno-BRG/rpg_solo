@@ -14,7 +14,13 @@ interface Entry {
   createdAt: string;
 }
 
-export function JournalFeed({ campaignId }: { campaignId: string }) {
+export function JournalFeed({
+  campaignId,
+  refreshKey = 0,
+}: {
+  campaignId: string;
+  refreshKey?: number;
+}) {
   const [entries, setEntries] = useState<Entry[]>([]);
   const [selected, setSelected] = useState<Entry | null>(null);
   const [loading, setLoading] = useState(true);
@@ -28,7 +34,7 @@ export function JournalFeed({ campaignId }: { campaignId: string }) {
       }
       setLoading(false);
     })();
-  }, [campaignId]);
+  }, [campaignId, refreshKey]);
 
   if (loading) return <p className="p-6 text-sm text-ink-500">Loading…</p>;
 

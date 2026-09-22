@@ -2,17 +2,41 @@
  * AI tool layer — function-calling definitions and executors.
  *
  * The AI GM interacts with the game through these tools: rolling
- * dice, consulting the oracle, searching campaign lore, writing
- * journal entries and updating story state.
+ * dice and combat damage, consulting the oracle and tables,
+ * generating NPCs, running interludes and dramatic tasks,
+ * searching campaign lore, writing journal entries and updating
+ * story state.
  *
  * Pattern: Command — each tool declares a schema (for the model)
  * and an execute function (for the runtime).
+ *
+ * Stateless tools (dice, oracle, generation) return pure results;
+ * stateful tools (dramatic tasks, XP) persist directly, mirroring
+ * the `search_lore` precedent. Narrative side effects (journal,
+ * threads, cast, scenes, chaos) are applied by the GM engine.
  */
 import { z } from "zod";
 import { rollTrait, rollPlain } from "../rules/dice";
+import {
+  damageRoll,
+  rollInitiative,
+  summarizeDamage,
+} from "../rules/combat";
+import {
+  advanceTaskRound,
+  applyTaskRoll,
+  createDramaticTask,
+  taskProgress,
+  type DramaticTask,
+} from "../rules/dramatic-tasks";
+import { runInterlude } from "../rules/interludes";
+import { awardXp, progress as progression } from "../rules/progression";
 import { askFateChart, LIKELIHOODS, type Likelihood } from "../oracle/fate-chart";
 import { randomEvent, detailAction, detailSubject, setupScene } from "../oracle/random-events";
+import { generateNpc, formatNpc, type NpcGenre } from "../oracle/npc";
+import { rollOnEntries, rollOnTable, TABLE_GENRES } from "../oracle/tables";
 import { searchLore } from "../rag/lore";
+import { prisma } from "../db";
 
 // ── Tool schemas (Zod is the single source of truth) ─────────
 
@@ -23,14 +47,106 @@ const rollDiceSchema = z.object({
     .min(3)
     .max(12)
     .describe("Trait die step: 3=d4-1, 4, 6, 8, 10, 12"),
-  targetNumber: z.number().int().default(4).describe("Target number (default 4)"),
+  targetNumber: z.number().int().default(4).describe(
+    "Target number: 4 for tasks/Soak/Unshake, the defender's Parry for attacks",
+  ),
   modifier: z.number().int().default(0).describe("Situational modifier"),
   description: z.string().describe("What is being attempted"),
+});
+
+const rollDamageSchema = z.object({
+  weaponDice: z
+    .array(z.number().int().min(3).max(12))
+    .min(1)
+    .max(4)
+    .describe("Weapon damage die/dice by sides (e.g. [6] or [6, 6]); dice ace"),
+  attackRaises: z.number().int().min(0).max(5).default(0).describe(
+    "Raises on the attack roll — each grants +1d6 (SWADE)",
+  ),
+  toughness: z.number().int().min(1).max(30).describe("Defender's Toughness"),
+  isExtra: z.boolean().default(false).describe(
+    "True for mooks/extras: a raise over Toughness takes them out",
+  ),
+  modifier: z.number().int().min(-10).max(10).default(0),
+  targetName: z.string().optional().describe("Who is being hit"),
+});
+
+const rollInitiativeSchema = z.object({
+  participants: z
+    .array(
+      z.object({
+        name: z.string().describe("Combatant name"),
+        actor: z.enum(["wildcard", "extra"]).optional().describe(
+          "wildcard = PC/named NPC (hero's luck); extra = mook",
+        ),
+      }),
+    )
+    .min(1)
+    .max(12)
+    .describe("Everyone rolling for the round (d6+d6, doubles = Joker)"),
 });
 
 const oracleSchema = z.object({
   question: z.string().describe("The yes/no question"),
   likelihood: z.enum(LIKELIHOODS).describe("How likely a Yes is"),
+});
+
+const randomEventSchema = z.object({
+  reason: z.string().optional().describe("What triggered the event (context for the story)"),
+});
+
+const rollTableSchema = z.object({
+  table: z
+    .string()
+    .describe("Built-in table id (e.g. 'fantasy-encounter') or the name of a custom table"),
+});
+
+const npcSchema = z.object({
+  genre: z
+    .enum(["fantasy", "scifi", "western", "noir", "horror", "universal"] as [NpcGenre, ...NpcGenre[]])
+    .optional()
+    .describe("Name/occupation pool — match the campaign genre"),
+  purpose: z.string().optional().describe("Why this NPC exists in the scene"),
+});
+
+const interludeSchema = z.object({
+  context: z.string().optional().describe("Where/when the interlude happens"),
+});
+
+const setupSceneCheckSchema = z.object({
+  applyToScene: z
+    .boolean()
+    .default(false)
+    .describe("Mark the current scene with the rolled type (Set/Altered/Interrupt)"),
+});
+
+const startTaskSchema = z.object({
+  name: z.string().describe("What the party is racing against time to do"),
+  skills: z
+    .array(z.string())
+    .min(1)
+    .max(6)
+    .describe("Skills that may be used to advance the task"),
+  requiredSuccesses: z.number().int().min(1).max(30).default(10).describe(
+    "Tokens needed (SWADE default 10)",
+  ),
+  timeLimit: z.number().int().min(1).max(12).default(4).describe(
+    "Rounds/actions before it fails (default 4)",
+  ),
+});
+
+const advanceTaskSchema = z.object({
+  taskName: z.string().optional().describe("Defaults to the running task"),
+  skill: z.string().describe("Skill used for this attempt"),
+  dieStep: z.number().int().min(3).max(12).describe("The skill's die step"),
+  modifier: z.number().int().min(-10).max(10).default(0),
+});
+
+const awardXpSchema = z.object({
+  characterName: z.string().optional().describe(
+    "Whose sheet to credit; omit to award the whole party",
+  ),
+  amount: z.number().int().min(1).max(5).default(1).describe("XP (1 normal, 2–3 for hard-won scenes)"),
 });
 
 const searchLoreSchema = z.object({
@@ -64,6 +180,10 @@ const chaosSchema = z.object({
 const openSceneSchema = z.object({
   title: z.string().describe("Scene title"),
   goal: z.string().optional().describe("Player-authored intent (if known)"),
+  type: z
+    .enum(["Set", "Altered", "Interrupt"])
+    .optional()
+    .describe("Rolled scene check result, when known"),
 });
 
 const closeSceneSchema = z.object({
@@ -76,12 +196,23 @@ const updateCharacterSchema = z.object({
   wounds: z.number().int().min(0).max(5).optional(),
   fatigue: z.number().int().min(0).max(3).optional(),
   powerPoints: z.number().int().min(0).max(100).optional(),
+  shaken: z.boolean().optional().describe("True to mark the character Shaken (UI hint)"),
 });
 
 /** Map of tool name → Zod schema. */
 export const TOOL_SCHEMAS = {
   roll_dice: rollDiceSchema,
+  roll_damage: rollDamageSchema,
+  roll_initiative: rollInitiativeSchema,
   ask_oracle: oracleSchema,
+  random_event: randomEventSchema,
+  roll_table: rollTableSchema,
+  generate_npc: npcSchema,
+  run_interlude: interludeSchema,
+  setup_scene: setupSceneCheckSchema,
+  start_dramatic_task: startTaskSchema,
+  advance_dramatic_task: advanceTaskSchema,
+  award_experience: awardXpSchema,
   search_lore: searchLoreSchema,
   save_journal_entry: journalSchema,
   update_threads: threadSchema,
@@ -108,9 +239,29 @@ export function toolDefinitions() {
 
 const TOOL_DESCRIPTIONS: Record<ToolName, string> = {
   roll_dice:
-    "Roll a Savage Worlds trait check (wild die included). Use for any dramatic task.",
+    "Roll a Savage Worlds check (trait die + wild die, acing). Use for attacks (target = Parry), Soak/Unshake (target 4) and any dramatic task roll.",
+  roll_damage:
+    "Roll weapon damage (dice ace; +1d6 per attack raise) and compare to Toughness → Shaken/Wounds, or an extra taken out.",
+  roll_initiative:
+    "Roll combat initiative for everyone in the round (d6+d6, doubles = Joker +2). Returns the action order.",
   ask_oracle:
     "Ask the Mythic oracle a yes/no question about the story. Use when the outcome is uncertain and should not be invented.",
+  random_event:
+    "Force a Mythic random event NOW (focus/action/subject). Use when the chaos feels high or the story stalls.",
+  roll_table:
+    "Roll on a d100 table for color: encounters, complications, loot, omen, weather… (built-in genre tables or the user's custom tables).",
+  generate_npc:
+    "Generate a complete NPC (name, occupation, appearance, want, secret, mannerism, stance) for an incoming scene, then add them with update_cast.",
+  run_interlude:
+    "Run a scene-break interlude: a reflective question for the player (and +1 benny). Use during rests or between scenes.",
+  setup_scene:
+    "Roll the Mythic scene check: is the expected scene Set, Altered or Interrupted? Use right before opening a scene.",
+  start_dramatic_task:
+    "Start a SWADE dramatic task (a skill challenge against the clock: escaping, defusing, researching under pressure).",
+  advance_dramatic_task:
+    "Make one attempt on the running dramatic task: roll the skill, bank tokens (success = 1, +1 per raise), advance the round.",
+  award_experience:
+    "Award XP at a scene's end (1 XP normal, 2–3 for something hard-won). Updates the sheet(s) and reports rank progress.",
   search_lore:
     "Search the campaign's memory (journal, characters, rules) for relevant context before narrating.",
   save_journal_entry:
@@ -154,6 +305,25 @@ export async function executeTool(
       const result = rollTrait(a.dieStep, a.targetNumber, a.modifier);
       return { description: a.description, ...result };
     }
+    case "roll_damage": {
+      const a = args as z.infer<typeof rollDamageSchema>;
+      const result = damageRoll(a.weaponDice, a.attackRaises, a.toughness, {
+        isExtra: a.isExtra,
+        modifier: a.modifier,
+      });
+      return {
+        target: a.targetName ?? "the target",
+        ...result,
+        summary: summarizeDamage(result),
+      };
+    }
+    case "roll_initiative": {
+      const a = args as z.infer<typeof rollInitiativeSchema>;
+      const order = rollInitiative(
+        a.participants.map((p) => ({ name: p.name, actor: p.actor ?? "extra" })),
+      );
+      return { round: order };
+    }
     case "ask_oracle": {
       const a = args as z.infer<typeof oracleSchema>;
       const fate = askFateChart(a.question, a.likelihood as Likelihood, ctx.chaosRank);
@@ -162,6 +332,122 @@ export async function executeTool(
         return { ...fate, randomEventDetails: randomEvent() };
       }
       return fate;
+    }
+    case "random_event": {
+      const a = args as z.infer<typeof randomEventSchema>;
+      return { reason: a.reason ?? null, event: randomEvent() };
+    }
+    case "roll_table": {
+      const a = args as z.infer<typeof rollTableSchema>;
+      // Custom tables are user-owned: resolve through the campaign.
+      const custom = await findCustomTable(ctx.campaignId, a.table);
+      if (custom) {
+        const entries = custom.entries as string[];
+        return {
+          ...rollOnEntries(custom.id, `custom: ${custom.name}`, entries),
+          custom: true,
+        };
+      }
+      return { ...rollOnTable(a.table.trim()), custom: false };
+    }
+    case "generate_npc": {
+      const a = args as z.infer<typeof npcSchema>;
+      const npc = generateNpc(a.genre ?? "universal");
+      return { purpose: a.purpose ?? null, npc, text: formatNpc(npc) };
+    }
+    case "run_interlude": {
+      const a = args as z.infer<typeof interludeSchema>;
+      return { context: a.context ?? null, interlude: runInterlude() };
+    }
+    case "setup_scene": {
+      const a = args as z.infer<typeof setupSceneCheckSchema>;
+      const setup = setupScene(ctx.chaosRank);
+      if (a.applyToScene && ctx.sceneId) {
+        await prisma.scene.update({
+          where: { id: ctx.sceneId },
+          data: { type: setup.type },
+        });
+      }
+      return { ...setup, applied: a.applyToScene && !!ctx.sceneId };
+    }
+    case "start_dramatic_task": {
+      const a = args as z.infer<typeof startTaskSchema>;
+      const task = createDramaticTask({
+        name: a.name,
+        skills: a.skills,
+        requiredSuccesses: a.requiredSuccesses,
+        timeLimit: a.timeLimit,
+      });
+      const row = await prisma.dramaticTask.create({
+        data: {
+          campaignId: ctx.campaignId,
+          sceneId: ctx.sceneId,
+          name: task.name,
+          skills: task.skills,
+          targetNumber: task.targetNumber,
+          requiredSuccesses: task.requiredSuccesses,
+          timeLimit: task.timeLimit,
+          attempts: [],
+        },
+      });
+      return { id: row.id, ...task, progress: taskProgress(task) };
+    }
+    case "advance_dramatic_task": {
+      const a = args as z.infer<typeof advanceTaskSchema>;
+      const row = await prisma.dramaticTask.findFirst({
+        where: {
+          campaignId: ctx.campaignId,
+          status: "running",
+          ...(a.taskName
+            ? { name: { equals: a.taskName, mode: "insensitive" as const } }
+            : {}),
+        },
+        orderBy: { updatedAt: "desc" },
+      });
+      if (!row) throw new Error(`No running dramatic task${a.taskName ? ` "${a.taskName}"` : ""}`);
+
+      const task = rowToTask(row);
+      const roll = rollTrait(a.dieStep, task.targetNumber, a.modifier);
+      const next = advanceTaskRound(applyTaskRoll(task, a.skill, roll));
+      await prisma.dramaticTask.update({
+        where: { id: row.id },
+        data: {
+          successes: next.successes,
+          timeUsed: next.timeUsed,
+          status: next.status,
+          attempts: next.attempts.map((t) => ({
+            round: t.round,
+            skill: t.skill,
+            raises: t.roll.raises,
+            criticalFailure: t.roll.criticalFailure,
+            tokens: t.tokens,
+          })),
+        },
+      });
+      return { id: row.id, skill: a.skill, roll, ...next, progress: taskProgress(next) };
+    }
+    case "award_experience": {
+      const a = args as z.infer<typeof awardXpSchema>;
+      const characters = await prisma.character.findMany({
+        where: {
+          campaignId: ctx.campaignId,
+          isDead: false,
+          ...(a.characterName
+            ? { name: { equals: a.characterName, mode: "insensitive" as const } }
+            : {}),
+        },
+      });
+      if (characters.length === 0) {
+        throw new Error(`No character${a.characterName ? ` "${a.characterName}"` : ""} to award XP`);
+      }
+      const awarded = [];
+      for (const c of characters) {
+        const xp = awardXp(c.xp, a.amount);
+        await prisma.character.update({ where: { id: c.id }, data: { xp } });
+        const snap = progression(xp);
+        awarded.push({ name: c.name, xp: snap.xp, rank: snap.rank, advances: snap.advances });
+      }
+      return { amount: a.amount, awarded };
     }
     case "search_lore": {
       const a = args as z.infer<typeof searchLoreSchema>;
@@ -186,8 +472,49 @@ export async function executeTool(
   }
 }
 
-/** Also expose dice/random-event helpers for direct (non-AI) routes. */
-export { rollPlain, randomEvent, detailAction, detailSubject, setupScene };
+/** Resolve a custom table by id or (case-insensitive) name. */
+async function findCustomTable(campaignId: string, ref: string) {
+  const campaign = await prisma.campaign.findUnique({
+    where: { id: campaignId },
+    select: { userId: true },
+  });
+  if (!campaign) return null;
+  const table = await prisma.customTable.findFirst({
+    where: {
+      userId: campaign.userId,
+      OR: [{ id: ref }, { name: { equals: ref, mode: "insensitive" } }],
+    },
+  });
+  return table;
+}
+
+/** Map a DramaticTask row to the rules-layer structure. */
+function rowToTask(row: {
+  name: string;
+  skills: unknown;
+  targetNumber: number;
+  requiredSuccesses: number;
+  successes: number;
+  timeLimit: number;
+  timeUsed: number;
+  status: string;
+  attempts: unknown;
+}): DramaticTask {
+  return {
+    name: row.name,
+    skills: (row.skills as string[]) ?? [],
+    targetNumber: row.targetNumber,
+    requiredSuccesses: row.requiredSuccesses,
+    successes: row.successes,
+    timeLimit: row.timeLimit,
+    timeUsed: row.timeUsed,
+    status: row.status as DramaticTask["status"],
+    attempts: [],
+  };
+}
+
+/** Also expose dice/oracle helpers for direct (non-AI) routes. */
+export { rollPlain, randomEvent, detailAction, detailSubject, setupScene, runInterlude, generateNpc, rollOnTable };
 
 function safeParse(json: string): unknown {
   try {
@@ -202,6 +529,10 @@ function safeParse(json: string): unknown {
  * OpenAI function calling (no external dependency needed).
  */
 function zodToJsonSchema(schema: z.ZodTypeAny): Record<string, unknown> {
+  return objectShapeToJson(schema);
+}
+
+function objectShapeToJson(schema: z.ZodTypeAny): Record<string, unknown> {
   const shape = (schema as unknown as { _def: { shape: () => Record<string, z.ZodTypeAny> } })
     ._def.shape();
   const properties: Record<string, unknown> = {};
@@ -229,10 +560,18 @@ function zodFieldToJson(field: z.ZodTypeAny): {
       return { schema: { type: "string" }, required: true };
     case "ZodNumber":
       return { schema: { type: "number" }, required: true };
+    case "ZodBoolean":
+      return { schema: { type: "boolean" }, required: true };
     case "ZodEnum": {
       const values = def.values as string[];
       return { schema: { type: "string", enum: values }, required: true };
     }
+    case "ZodArray": {
+      const inner = zodFieldToJson(def.type as z.ZodTypeAny);
+      return { schema: { type: "array", items: inner.schema }, required: true };
+    }
+    case "ZodObject":
+      return { schema: objectShapeToJson(field), required: true };
     case "ZodDefault": {
       const inner = zodFieldToJson(def.innerType as z.ZodTypeAny);
       return { schema: inner.schema, required: false };

@@ -41,8 +41,18 @@ export async function POST(request: Request) {
     return new Response(JSON.stringify({ error: "Campaign not found" }), { status: 404 });
   }
 
-  const config = await resolveProviderConfig(session.user.id);
-  const provider = createProvider(config);
+  // Resolve the provider before opening the stream so a missing
+  // key/config surfaces as a clean 400 the UI can explain.
+  let provider;
+  try {
+    const config = await resolveProviderConfig(session.user.id);
+    provider = createProvider(config);
+  } catch (error) {
+    return Response.json(
+      { error: error instanceof Error ? error.message : String(error) },
+      { status: 400 },
+    );
+  }
 
   const encoder = new TextEncoder();
   const stream = new ReadableStream({

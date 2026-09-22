@@ -23,11 +23,17 @@ export async function GET(_request: Request, { params }: Params) {
       storyChars: true,
       journal: { orderBy: { order: "asc" } },
       scenes: { orderBy: { createdAt: "desc" }, take: 10 },
+      tasks: { orderBy: { updatedAt: "desc" }, take: 10 },
+      chatTurns: { orderBy: { createdAt: "desc" }, take: 40 },
     },
   });
   if (!campaign) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
-  return NextResponse.json({ campaign });
+  // Chat history is returned oldest-first for replay.
+  const { chatTurns, ...rest } = campaign;
+  return NextResponse.json({
+    campaign: { ...rest, chatTurns: chatTurns.slice().reverse() },
+  });
 }
 
 const UpdateCampaign = z.object({

@@ -31,7 +31,15 @@ const SceneInput = z.object({
   goal: z.string().max(1000).optional(),
 });
 
-const Union = z.discriminatedUnion("resource", [ThreadInput, CastInput, SceneInput]);
+const TaskInput = z.object({
+  resource: z.literal("tasks"),
+  name: z.string().min(1).max(120),
+  skills: z.array(z.string().min(1).max(60)).min(1).max(6),
+  requiredSuccesses: z.number().int().min(1).max(30).default(10),
+  timeLimit: z.number().int().min(1).max(12).default(4),
+});
+
+const Union = z.discriminatedUnion("resource", [ThreadInput, CastInput, SceneInput, TaskInput]);
 
 /** POST — create a thread, cast member or scene. */
 export async function POST(request: Request, { params }: Params) {
@@ -74,7 +82,25 @@ export async function POST(request: Request, { params }: Params) {
       });
       return NextResponse.json({ scene }, { status: 201 });
     }
+    case "tasks": {
+      const openScene = await prisma.scene.findFirst({
+        where: { campaignId: params.id, open: true },
+        orderBy: { createdAt: "desc" },
+      });
+      const task = await prisma.dramaticTask.create({
+        data: {
+          campaignId: params.id,
+          sceneId: openScene?.id,
+          name: parsed.data.name,
+          skills: parsed.data.skills,
+          requiredSuccesses: parsed.data.requiredSuccesses,
+          timeLimit: parsed.data.timeLimit,
+        },
+      });
+      return NextResponse.json({ task }, { status: 201 });
+    }
   }
+  return NextResponse.json({ error: "Unknown resource" }, { status: 400 });
 }
 
 /** DELETE — remove a thread/cast/scene by `resource` + `itemId`. */
@@ -103,6 +129,9 @@ export async function DELETE(request: Request, { params }: Params) {
       break;
     case "scenes":
       await prisma.scene.deleteMany({ where: { id: itemId, campaignId: params.id } });
+      break;
+    case "tasks":
+      await prisma.dramaticTask.deleteMany({ where: { id: itemId, campaignId: params.id } });
       break;
     default:
       return NextResponse.json({ error: "Unknown resource" }, { status: 400 });

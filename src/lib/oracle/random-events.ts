@@ -23,39 +23,97 @@ export interface RandomEvent {
 }
 
 /**
- * Mythic event focus table (d100). Condensed to 20 bands —
- * each band covers 5 percentage points.
+ * Mythic event focus table (d100) — 12 categories across 100
+ * entries, following Mythic 2e's proportions (NPC trouble and
+ * moving threads are the most common interruptions).
  */
 const EVENT_FOCUS = [
-  "NPC positive", "NPC negative", "Introduce a new NPC",
-  "Thread progress toward", "Thread progress away from", "Thread closes",
-  "PC positive", "PC negative", "Plot movement toward",
-  "Plot movement away from", "Introduce a new thread", "Move toward a thread",
-  "Move away from a thread", "Current context", "Remote event",
-  "Someone acts", "New expectations", "Ambiguous event",
-  "Wild event", "Something unusual",
+  // Remote event (10)
+  "Remote event", "Remote event", "Remote event", "Remote event", "Remote event",
+  "Remote event", "Remote event", "Remote event", "Remote event", "Remote event",
+  // NPC action (10)
+  "Someone acts", "Someone acts", "Someone acts", "Someone acts", "Someone acts",
+  "Someone acts", "Someone acts", "Someone acts", "Someone acts", "Someone acts",
+  // NPC negative (15)
+  "NPC negative", "NPC negative", "NPC negative", "NPC negative", "NPC negative",
+  "NPC negative", "NPC negative", "NPC negative", "NPC negative", "NPC negative",
+  "NPC negative", "NPC negative", "NPC negative", "NPC negative", "NPC negative",
+  // Ambiguous event (10)
+  "Ambiguous event", "Ambiguous event", "Ambiguous event", "Ambiguous event",
+  "Ambiguous event", "Ambiguous event", "Ambiguous event", "Ambiguous event",
+  "Ambiguous event", "Ambiguous event",
+  // New NPC (10)
+  "Introduce a new NPC", "Introduce a new NPC", "Introduce a new NPC",
+  "Introduce a new NPC", "Introduce a new NPC", "Introduce a new NPC",
+  "Introduce a new NPC", "Introduce a new NPC", "Introduce a new NPC",
+  "Introduce a new NPC",
+  // Thread resolved (5)
+  "Thread progress toward", "Thread progress toward", "Thread progress toward",
+  "Thread progress toward", "Thread progress toward",
+  // PC positive (5)
+  "PC positive", "PC positive", "PC positive", "PC positive", "PC positive",
+  // PC negative (10)
+  "PC negative", "PC negative", "PC negative", "PC negative", "PC negative",
+  "PC negative", "PC negative", "PC negative", "PC negative", "PC negative",
+  // Move toward thread (10)
+  "Move toward a thread", "Move toward a thread", "Move toward a thread",
+  "Move toward a thread", "Move toward a thread", "Move toward a thread",
+  "Move toward a thread", "Move toward a thread", "Move toward a thread",
+  "Move toward a thread",
+  // Move away from thread (5)
+  "Move away from a thread", "Move away from a thread", "Move away from a thread",
+  "Move away from a thread", "Move away from a thread",
+  // Close a thread (5)
+  "Thread closes", "Thread closes", "Thread closes", "Thread closes", "Thread closes",
+  // Wild event (5)
+  "Wild event", "Wild event", "Wild event", "Wild event", "Wild event",
 ] as const;
 
-/** Mythic action meaning table (d100, condensed to 40 verb bands). */
+/** Mythic action meaning table (d100 — 100 verb entries). */
 const ACTION_WORDS = [
-  "Attainment", "Starting", "Opposition", "Release", "New", "Oppose",
-  "Malice", "Negotiate", "Arrive", "Change", "Pursue", "Increase",
-  "Decrease", "War", "Break", "Reach", "Strive", "Support",
-  "Stop", "Bring", "Oppress", "Disrupt", "Open", "Inside",
-  "Fight", "Outside", "Guide", "Communicate", "Discard", "Imitate",
-  "Move", "Delay", "Return", "Give", "Agree", "Inspection",
-  "Spy", "Align", "Wound", "Possess",
+  "Ambush", "Alliance", "Arrival", "Attack", "Care",
+  "Praise", "Communication", "Travel", "Hold", "Oppose",
+  "Malice", "Neglect", "Discussion", "Punishment", "Change",
+  "Continue", "Break", "Befriend", "Judgment", "Inspection",
+  "Struggle", "Aid", "Retreat", "Advance", "Delay",
+  "Return", "Give", "Agree", "Refuse", "Demand",
+  "Bargain", "Threaten", "Protect", "Abandon", "Reveal",
+  "Conceal", "Search", "Find", "Lose", "Steal",
+  "Restore", "Destroy", "Build", "Divide", "Unite",
+  "Lead", "Follow", "Escape", "Capture", "Kill",
+  "Heal", "Wound", "Serve", "Rebel", "Obey",
+  "Defy", "Spy", "Lie", "Confess", "Forgive",
+  "Reward", "Claim", "Release", "Summon", "Banish",
+  "Open", "Close", "Guard", "Infiltrate", "Negotiate",
+  "Manipulate", "Inspire", "Disrupt", "Support", "Oppress",
+  "Free", "Bind", "Guide", "Mislead", "Watch",
+  "Ignore", "Depart", "Celebrate", "Mourn", "Challenge",
+  "Submit", "Transform", "Corrupt", "Purify", "Witness",
+  "Distract", "Prepare", "Fail", "Succeed", "Wait",
+  "Rush", "Silence", "Inspect", "Expose",
 ] as const;
 
-/** Mythic subject meaning table (d100, condensed to 40 noun bands). */
+/** Mythic subject meaning table (d100 — 100 noun entries). */
 const SUBJECT_WORDS = [
-  "Goals", "Allies", "Enemies", "Battle", "Magic", "Nature",
-  "Leadership", "Tension", "Military", "Technology", "Lie", "Expectations",
-  "Advice", "Messages", "Path", "News", "Illusion", "Portals",
-  "Intrigue", "Fears", "Environment", "Pleasures", "Pain", "Time",
-  "Freedom", "Wealth", "Fortune", "Balance", "Danger", "Death",
-  "Story", "Secrets", "Knowledge", "Jealousy", "Success", "Failure",
-  "Animals", "Humanitarian", "Bureaucracy", "Judgment",
+  "Goals", "Allies", "Enemies", "Battle", "Magic",
+  "Nature", "Leadership", "Tension", "Military", "Technology",
+  "Lie", "Expectations", "Advice", "Messages", "Path",
+  "News", "Illusion", "Portals", "Intrigue", "Fears",
+  "Environment", "Pleasures", "Pain", "Time", "Freedom",
+  "Wealth", "Fortune", "Balance", "Danger", "Death",
+  "Story", "Secrets", "Knowledge", "Jealousy", "Success",
+  "Failure", "Animals", "Humanity", "Bureaucracy", "Judgment",
+  "Family", "Honor", "Debt", "Contracts", "Home",
+  "Road", "Ruins", "Bounty", "Weapons", "Poison",
+  "Faith", "Ritual", "Blood", "Oath", "Stranger",
+  "Child", "Ruler", "City", "Wilderness", "Storm",
+  "Fire", "Water", "Cold", "Darkness", "Light",
+  "Signal", "Silence", "Body", "Mind", "Memory",
+  "Name", "Shadow", "Cage", "Key", "Door",
+  "Coin", "Blade", "Beast", "Treasure", "Curse",
+  "Prophecy", "Trap", "Rival", "Crew", "Ship",
+  "Machine", "Plague", "Hunger", "Territory", "Law",
+  "Truth", "Identity", "Love", "Revenge", "Legacy",
 ] as const;
 
 /** Pick a band from a condensed table of `len` entries. */

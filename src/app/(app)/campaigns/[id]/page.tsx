@@ -17,7 +17,7 @@ export default async function CampaignPage({
     where: { id: params.id, userId: session!.user.id },
     include: {
       scenes: { where: { open: true }, orderBy: { createdAt: "desc" }, take: 1 },
-      characters: { orderBy: { createdAt: "asc" } },
+      chatTurns: { orderBy: { createdAt: "desc" }, take: 40 },
     },
   });
   if (!campaign) notFound();
@@ -30,7 +30,13 @@ export default async function CampaignPage({
       chaosRank={campaign.chaosRank}
       currentScene={campaign.currentScene}
       openSceneId={campaign.scenes[0]?.id ?? null}
-      characters={campaign.characters.map((c) => ({ id: c.id, name: c.name, rank: c.rank }))}
+      chatTurns={campaign.chatTurns
+        .slice()
+        .reverse()
+        .map((t) => ({
+          role: t.role === "user" ? ("user" as const) : ("assistant" as const),
+          content: t.content,
+        }))}
     />
   );
 }

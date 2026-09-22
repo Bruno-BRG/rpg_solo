@@ -1,21 +1,24 @@
 "use client";
 /**
  * Campaign workspace — tabbed layout: Story (AI GM), Oracle,
- * Journal, Cast & Threads, Party, Lore.
+ * Tables, Journal, Cast & Threads, Party, Lore.
  *
  * Client component; tabs keep each panel mounted lazily to avoid
- * fetching everything at once.
+ * fetching everything at once. Shared world state (chaos rank,
+ * open scene, refresh signal after GM turns) lives here and is
+ * pushed down to the panels that care about it.
  */
 import { useState } from "react";
-import { GmChat } from "@/components/gm/GmChat";
+import { GmChat, type Turn } from "@/components/gm/GmChat";
 import { OraclePanel } from "@/components/oracle/OraclePanel";
+import { TablesPanel } from "@/components/oracle/TablesPanel";
 import { JournalFeed } from "@/components/campaign/JournalFeed";
 import { ThreadsPanel } from "@/components/campaign/ThreadsPanel";
 import { PartyPanel } from "@/components/campaign/PartyPanel";
 import { LorePanel } from "@/components/campaign/LorePanel";
 import { ChaosRankControl } from "@/components/campaign/ChaosRankControl";
 
-const TABS = ["Story", "Oracle", "Journal", "Threads & Cast", "Party", "Lore"] as const;
+const TABS = ["Story", "Oracle", "Tables", "Journal", "Threads & Cast", "Party", "Lore"] as const;
 type Tab = (typeof TABS)[number];
 
 export interface WorkspaceProps {
@@ -25,12 +28,16 @@ export interface WorkspaceProps {
   chaosRank: number;
   currentScene: string | null;
   openSceneId: string | null;
-  characters: Array<{ id: string; name: string; rank: string }>;
+  /** Persisted conversation, oldest-first (ChatTurn rows). */
+  chatTurns?: Turn[];
 }
 
 export function Workspace(props: WorkspaceProps) {
   const [tab, setTab] = useState<Tab>("Story");
   const [chaosRank, setChaosRank] = useState(props.chaosRank);
+  const [openSceneId, setOpenSceneId] = useState(props.openSceneId);
+  /** Bumped after every GM turn so panels refetch world state. */
+  const [refreshKey, setRefreshKey] = useState(0);
 
   async function changeChaos(rank: number) {
     setChaosRank(rank);
@@ -75,15 +82,30 @@ export function Workspace(props: WorkspaceProps) {
       {/* Panels */}
       <section className="flex-1 overflow-hidden">
         {tab === "Story" && (
-          <GmChat campaignId={props.campaignId} onChaosChange={setChaosRank} />
+          <GmChat
+            campaignId={props.campaignId}
+            initialTurns={props.chatTurns}
+            onChaosChange={setChaosRank}
+            onSceneChange={setOpenSceneId}
+            onTurnDone={() => setRefreshKey((k) => k + 1)}
+          />
         )}
         {tab === "Oracle" && (
-          <OraclePanel campaignId={props.campaignId} openSceneId={props.openSceneId} chaosRank={chaosRank} />
+          <OraclePanel
+            campaignId={props.campaignId}
+            openSceneId={openSceneId}
+            chaosRank={chaosRank}
+          />
         )}
-        {tab === "Journal" && <JournalFeed campaignId={props.campaignId} />}
-        {tab === "Threads & Cast" && <ThreadsPanel campaignId={props.campaignId} />}
+        {tab === "Tables" && <TablesPanel openSceneId={openSceneId} />}
+        {tab === "Journal" && (
+          <JournalFeed campaignId={props.campaignId} refreshKey={refreshKey} />
+        )}
+        {tab === "Threads & Cast" && (
+          <ThreadsPanel campaignId={props.campaignId} refreshKey={refreshKey} />
+        )}
         {tab === "Party" && (
-          <PartyPanel campaignId={props.campaignId} characters={props.characters} />
+          <PartyPanel campaignId={props.campaignId} key={refreshKey} />
         )}
         {tab === "Lore" && <LorePanel campaignId={props.campaignId} />}
       </section>
