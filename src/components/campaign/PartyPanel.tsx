@@ -20,6 +20,7 @@ interface Sheet {
   bennies: number;
   wounds: number;
   fatigue: number;
+  shaken: boolean;
   powerPoints: number;
   isDead: boolean;
   agility: number;
@@ -147,6 +148,13 @@ export function PartyPanel({ campaignId }: { campaignId: string }) {
                 danger
                 onChange={(v) => patch(c.id, { fatigue: Math.max(0, Math.min(3, v)) })}
               />
+              <button
+                className={`tag ${c.shaken ? "border-accent text-accent" : ""}`}
+                aria-pressed={c.shaken}
+                onClick={() => patch(c.id, { shaken: !c.shaken })}
+              >
+                {c.shaken ? "Shaken" : "Not shaken"}
+              </button>
             </div>
           </li>
         );

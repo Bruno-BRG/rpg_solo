@@ -72,6 +72,7 @@ export async function POST(request: Request) {
           content: result.content,
           toolTrace: result.toolTrace,
           effects: result.effects,
+          status: result.status,
         });
       } catch (error) {
         send("error", { message: error instanceof Error ? error.message : String(error) });

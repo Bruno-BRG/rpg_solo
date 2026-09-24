@@ -18,6 +18,11 @@ import { runInterlude, interludeOutlook } from "../src/lib/rules/interludes";
 import { progress, awardXp, XP_PER_ADVANCE } from "../src/lib/rules/progression";
 import { BUILTIN_TABLES, listTables, getTable, rollOnTable, rollOnEntries, TABLE_GENRES } from "../src/lib/oracle/tables";
 import { generateNpc, formatNpc, type NpcGenre } from "../src/lib/oracle/npc";
+import {
+  buildCampaignDigest,
+  normalizeFactText,
+  SECTION_BUDGETS,
+} from "../src/lib/gm/knowledge";
 
 let failures = 0;
 function check(name: string, ok: boolean, detail = "") {
@@ -245,6 +250,99 @@ console.log("\n[9] NPC generator");
   check("stance distribution sane", hostile > 0.15 && hostile < 0.55, `${(hostile * 100).toFixed(0)}% hostile`);
 
   check("formatNpc is narration-ready", formatNpc(generateNpc("western")).includes("Wants:"));
+}
+
+// ── Campaign knowledge digest ────────────────────────────────
+console.log("\n[10] Campaign knowledge digest");
+{
+  const digest = buildCampaignDigest({
+    facts: [
+      { category: "Location", text: "Ember Coast is ruled by the Tide Queen", importance: 3 },
+      { category: "Character", text: "The Dock Warden counts every crate twice", importance: 1 },
+      { category: "Promise", text: "The party owes the Archivist a favour", importance: 2 },
+      { category: "Mystery", text: "Who set the docks on fire?", importance: 2 },
+    ],
+    threads: ["Find the Ember Crown"],
+    cast: [
+      {
+        name: "Dock Warden",
+        stance: "Hostile",
+        description: "Counts every crate twice",
+        agenda: "Control the docks",
+        plan: "Hire the party to look the other way",
+      },
+    ],
+    party: ["Hero (Novice) — 3 bennies, 0 wounds, 0 XP"],
+    journal: ["The docks burned"],
+    arcs: [{ name: "The Drowned Bell", premise: "A bell rings below", goal: "Silence it", status: "Active" }],
+    beats: [{ title: "The bell rings again", detail: "The harbour floods", status: "Ready", arcName: "The Drowned Bell" }],
+    clocks: [{ name: "Ritual completes", description: "The tide rises", current: 2, max: 6 }],
+  });
+
+  check("facts carry category and importance", digest.knowledge.includes("[Location]! Ember Coast"));
+  check("facts are ordered by importance", digest.knowledge.indexOf("Tide Queen") < digest.knowledge.indexOf("Dock Warden"));
+  const openSection = digest.knowledge.split("OPEN PROMISES & MYSTERIES")[1] ?? "";
+  const settledSection = digest.knowledge.split("OPEN PROMISES & MYSTERIES")[0] ?? "";
+  check(
+    "promises and mysteries leave the settled facts",
+    openSection.includes("owes the Archivist") &&
+      openSection.includes("Who set the docks on fire?") &&
+      !settledSection.includes("owes the Archivist"),
+  );
+  check(
+    "cast, party, threads and journal reach the knowledge block",
+    digest.knowledge.includes("Dock Warden (Hostile)") &&
+      digest.knowledge.includes("Hero (Novice)") &&
+      digest.knowledge.includes("Find the Ember Crown") &&
+      digest.knowledge.includes("The docks burned"),
+  );
+  check(
+    "prep carries arcs, events, clocks and agendas",
+    digest.prep.includes("[Active] The Drowned Bell") &&
+      digest.prep.includes("The bell rings again") &&
+      digest.prep.includes("2/6") &&
+      digest.prep.includes("wants: Control the docks"),
+  );
+
+  const many = Array.from({ length: 400 }, (_, i) => ({
+    category: "Event",
+    text: `Event number ${i} with a description long enough to matter`,
+    importance: 1,
+  }));
+  const big = buildCampaignDigest({
+    facts: many,
+    threads: [],
+    cast: [],
+    party: [],
+    journal: [],
+    arcs: [],
+    beats: [],
+    clocks: [],
+  });
+  check(
+    "facts section respects its budget",
+    big.knowledge.length <= SECTION_BUDGETS.facts,
+    `${big.knowledge.length}/${SECTION_BUDGETS.facts} chars`,
+  );
+  check("truncation is reported to the GM", big.knowledge.includes("more not shown"));
+
+  check(
+    "duplicate detection ignores case, accents and punctuation",
+    normalizeFactText("The Tide Queen rules!") === normalizeFactText("the tide  queen rules") &&
+      normalizeFactText("O coração da cidade") === normalizeFactText("o coracao da cidade"),
+  );
+
+  const empty = buildCampaignDigest({
+    facts: [],
+    threads: [],
+    cast: [],
+    party: [],
+    journal: [],
+    arcs: [],
+    beats: [],
+    clocks: [],
+  });
+  check("an empty campaign yields empty blocks", empty.knowledge === "" && empty.prep === "");
 }
 
 // ── Summary ──────────────────────────────────────────────────

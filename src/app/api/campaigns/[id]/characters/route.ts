@@ -50,10 +50,13 @@ export async function GET(_request: Request, { params }: Params) {
 
 const CharacterPatch = z.object({
   id: z.string().min(1),
+  name: z.string().min(1).max(80).optional(),
+  background: z.string().max(10_000).nullable().optional(),
   xp: z.number().int().min(0).max(10_000).optional(),
   bennies: z.number().int().min(0).max(10).optional(),
   wounds: z.number().int().min(0).max(5).optional(),
   fatigue: z.number().int().min(0).max(3).optional(),
+  shaken: z.boolean().optional(),
   powerPoints: z.number().int().min(0).max(100).optional(),
   rank: z.enum(["Novice", "Seasoned", "Veteran", "Heroic", "Legendary"]).optional(),
   isDead: z.boolean().optional(),
@@ -80,6 +83,16 @@ export async function PATCH(request: Request, { params }: Params) {
   if (updated.count === 0) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
   const character = await prisma.character.findUnique({ where: { id } });
+  if (character && (data.name !== undefined || data.background !== undefined)) {
+    const { ingestDocument } = await import("@/lib/rag/lore");
+    await ingestDocument(
+      process.env.OPENAI_API_KEY ?? null,
+      params.id,
+      "Character",
+      character.id,
+      character.background ? `${character.name}: ${character.background}` : "",
+    ).catch(() => undefined);
+  }
   return NextResponse.json({ character });
 }
 
@@ -99,10 +112,10 @@ export async function POST(request: Request, { params }: Params) {
   const character = await prisma.character.create({
     data: { ...parsed.data, campaignId: params.id },
   });  // Ingest background into campaign lore (best-effort).
-  if (parsed.data.background && process.env.OPENAI_API_KEY) {
+  if (parsed.data.background) {
     const { ingestDocument } = await import("@/lib/rag/lore");
     await ingestDocument(
-      process.env.OPENAI_API_KEY,
+      process.env.OPENAI_API_KEY ?? null,
       params.id,
       "Character",
       character.id,

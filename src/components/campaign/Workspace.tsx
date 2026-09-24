@@ -8,18 +8,29 @@
  * open scene, refresh signal after GM turns) lives here and is
  * pushed down to the panels that care about it.
  */
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { GmChat, type Turn } from "@/components/gm/GmChat";
 import { OraclePanel } from "@/components/oracle/OraclePanel";
 import { TablesPanel } from "@/components/oracle/TablesPanel";
 import { JournalFeed } from "@/components/campaign/JournalFeed";
 import { ThreadsPanel } from "@/components/campaign/ThreadsPanel";
 import { PartyPanel } from "@/components/campaign/PartyPanel";
-import { LorePanel } from "@/components/campaign/LorePanel";
+import { MemoryPanel } from "@/components/campaign/MemoryPanel";
+import { PrepPanel } from "@/components/campaign/PrepPanel";
 import { ChaosRankControl } from "@/components/campaign/ChaosRankControl";
 import { CampaignSettingsPanel, type CampaignSettings } from "@/components/campaign/CampaignSettings";
 
-const TABS = ["Story", "Oracle", "Tables", "Journal", "Threads & Cast", "Party", "Lore", "Settings"] as const;
+const TABS = [
+  "Story",
+  "Oracle",
+  "Tables",
+  "Journal",
+  "Threads & Cast",
+  "Party",
+  "Memory",
+  "Prep",
+  "Settings",
+] as const;
 type Tab = (typeof TABS)[number];
 
 export interface WorkspaceProps {
@@ -39,8 +50,14 @@ export function Workspace(props: WorkspaceProps) {
   const [tab, setTab] = useState<Tab>("Story");
   const [chaosRank, setChaosRank] = useState(props.chaosRank);
   const [openSceneId, setOpenSceneId] = useState(props.openSceneId);
+  const [currentScene, setCurrentScene] = useState(props.currentScene);
   /** Bumped after every GM turn so panels refetch world state. */
   const [refreshKey, setRefreshKey] = useState(0);
+
+  useEffect(() => {
+    setOpenSceneId(props.openSceneId);
+    setCurrentScene(props.currentScene);
+  }, [props.openSceneId, props.currentScene]);
 
   async function changeChaos(rank: number) {
     setChaosRank(rank);
@@ -60,7 +77,7 @@ export function Workspace(props: WorkspaceProps) {
             <h1 className="font-serif text-xl font-semibold">{props.name}</h1>
             <p className="text-xs text-ink-500">
               {props.genre ?? "No genre"}
-              {props.currentScene ? ` · Scene: ${props.currentScene}` : ""}
+              {currentScene ? ` · Scene: ${currentScene}` : ""}
             </p>
           </div>
           <ChaosRankControl value={chaosRank} onChange={changeChaos} />
@@ -90,7 +107,10 @@ export function Workspace(props: WorkspaceProps) {
             campaignId={props.campaignId}
             initialTurns={props.chatTurns}
             onChaosChange={setChaosRank}
-            onSceneChange={setOpenSceneId}
+            onSceneChange={(sceneId, title) => {
+              setOpenSceneId(sceneId);
+              setCurrentScene(title ?? null);
+            }}
             onTurnDone={() => setRefreshKey((k) => k + 1)}
           />
         )}
@@ -111,7 +131,12 @@ export function Workspace(props: WorkspaceProps) {
         {tab === "Party" && (
           <PartyPanel campaignId={props.campaignId} key={refreshKey} />
         )}
-        {tab === "Lore" && <LorePanel campaignId={props.campaignId} />}
+        {tab === "Memory" && (
+          <MemoryPanel campaignId={props.campaignId} refreshKey={refreshKey} />
+        )}
+        {tab === "Prep" && (
+          <PrepPanel campaignId={props.campaignId} refreshKey={refreshKey} />
+        )}
         {tab === "Settings" && (
           <CampaignSettingsPanel
             campaignId={props.campaignId}

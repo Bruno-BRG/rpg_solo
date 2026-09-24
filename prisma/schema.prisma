@@ -109,6 +109,10 @@ model Campaign {
   chatTurns  ChatTurn[]
   tasks      DramaticTask[]
   loreChunks LoreChunk[]
+  facts      CampaignFact[]
+  arcs       StoryArc[]
+  beats      StoryBeat[]
+  clocks     StoryClock[]
 
   @@index([userId])
 }
@@ -154,6 +158,8 @@ model Character {
   /// Current wounds (0–3) and fatigue (0–2).
   wounds      Int      @default(0)
   fatigue     Int      @default(0)
+  /// Shaken status from Savage Worlds; cleared explicitly by the player/GM.
+  shaken      Boolean  @default(false)
   /// Experience points (1 advance every 5 XP — see progression.ts).
   xp          Int      @default(0)
   /// Power points for arcane characters.
@@ -246,6 +252,10 @@ model StoryCharacter {
   stance     String   @default("Neutral")
   /// Alive | Dead | Gone
   status     String   @default("Alive")
+  /// What this NPC wants — their own agenda in the story.
+  agenda     String?
+  /// What they are doing about it right now (the GM's plan for them).
+  plan       String?
   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt
 
@@ -280,6 +290,8 @@ model ChatTurn {
   campaignId String
   /// "user" | "assistant"
   role       String
+  /// complete | failed (partial effects remain when a GM turn fails).
+  status     String   @default("complete")
   /// Turn text (narration for the assistant, action for the player).
   content    String
   /// Tool calls executed during an assistant turn (JSON array).
@@ -336,6 +348,94 @@ model CustomTable {
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId])
+}
+
+// ── Campaign knowledge (facts the GM must never forget) ──────
+
+/// A durable fact established in play. This is the GM's campaign
+/// knowledge base: names, places, promises, rulings, mysteries.
+/// Facts are injected into every turn, not only retrieved.
+model CampaignFact {
+  id         String   @id @default(cuid())
+  campaignId String
+  /// Character | Location | Faction | Item | Event | Promise | Ruling | Mystery
+  category   String
+  text       String
+  /// 1 (colour) … 3 (critical continuity).
+  importance Int      @default(2)
+  /// Active | Archived (archived facts leave the digest, stay in the record).
+  status     String   @default("Active")
+  /// GM | Player | Scene — where the fact came from.
+  sourceKind String   @default("GM")
+  /// Scene that established it, when known.
+  sceneId    String?
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  campaign Campaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+
+  @@index([campaignId, status, importance])
+}
+
+// ── GM preparation (the plan the GM plays toward) ────────────
+
+/// A long-running storyline the GM is preparing toward.
+model StoryArc {
+  id         String   @id @default(cuid())
+  campaignId String
+  name       String
+  /// One-paragraph setup of the arc.
+  premise    String?
+  /// What resolving the arc would mean.
+  goal       String?
+  /// Planned | Active | Resolved | Abandoned
+  status     String   @default("Planned")
+  order      Int      @default(0)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  campaign Campaign    @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  beats    StoryBeat[]
+
+  @@index([campaignId, status])
+}
+
+/// A prepared upcoming event — the GM's forward plan.
+model StoryBeat {
+  id         String   @id @default(cuid())
+  campaignId String
+  arcId      String?
+  title      String
+  /// How the GM expects it to land, and what it changes.
+  detail     String?
+  /// Planned | Ready | Done | Skipped
+  status     String   @default("Planned")
+  order      Int      @default(0)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  campaign Campaign  @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  arc      StoryArc? @relation(fields: [arcId], references: [id], onDelete: SetNull)
+
+  @@index([campaignId, status])
+}
+
+/// A tension clock — pressure that builds as the fiction moves.
+model StoryClock {
+  id          String   @id @default(cuid())
+  campaignId  String
+  name        String
+  description String?
+  current     Int      @default(0)
+  max         Int      @default(6)
+  /// Active | Resolved | Abandoned
+  status      String   @default("Active")
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  campaign Campaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+
+  @@index([campaignId, status])
 }
 
 // ── RAG ──────────────────────────────────────────────────────

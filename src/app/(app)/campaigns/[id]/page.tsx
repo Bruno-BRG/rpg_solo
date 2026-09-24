@@ -43,6 +43,7 @@ export default async function CampaignPage({
         .map((t) => ({
           role: t.role === "user" ? ("user" as const) : ("assistant" as const),
           content: t.content,
+          status: t.status === "failed" ? ("failed" as const) : ("complete" as const),
         }))}
     />
   );

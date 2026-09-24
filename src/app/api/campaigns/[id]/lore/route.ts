@@ -5,6 +5,7 @@ import { NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { prisma } from "@/lib/db";
+import { ensureCampaignLoreIndexed } from "@/lib/rag/lore";
 
 type Params = { params: { id: string } };
 
@@ -19,6 +20,8 @@ export async function GET(_request: Request, { params }: Params) {
   });
   if (!campaign) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
+  await ensureCampaignLoreIndexed(params.id);
+
   const chunks = await prisma.loreChunk.findMany({
     where: { campaignId: params.id },
     orderBy: [{ source: "asc" }, { chunkIndex: "asc" }],
@@ -26,5 +29,11 @@ export async function GET(_request: Request, { params }: Params) {
     take: 200,
   });
 
-  return NextResponse.json({ chunks });
+  const sources = await prisma.loreChunk.groupBy({
+    by: ["source"],
+    where: { campaignId: params.id },
+    _count: { _all: true },
+  });
+
+  return NextResponse.json({ chunks, sources: sources.map(({ source, _count }) => ({ source, count: _count._all })) });
 }

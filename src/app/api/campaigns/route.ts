@@ -50,10 +50,10 @@ export async function POST(request: Request) {
   });
 
   // Ingest setting notes into RAG lore when provided.
-  if (parsed.data.settingNotes && process.env.OPENAI_API_KEY) {
+  if (parsed.data.settingNotes) {
     const { ingestDocument } = await import("@/lib/rag/lore");
     await ingestDocument(
-      process.env.OPENAI_API_KEY,
+      process.env.OPENAI_API_KEY ?? null,
       campaign.id,
       "SettingNotes",
       campaign.id,

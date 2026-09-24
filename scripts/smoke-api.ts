@@ -187,10 +187,107 @@ async function main() {
     [thread, cast, scene, task].every((r) => r.status === 201),
     [thread.status, cast.status, scene.status, task.status].join(","));
   const sceneId = scene.data?.scene?.id as string;
+  const nextScene = await req(`/api/campaigns/${campaignId}/story`,
+    json({ resource: "scenes", title: "The train yard" }), sessionA);
+  const openScenes = await prisma.scene.findMany({ where: { campaignId, open: true } });
+  const afterOpen = await prisma.campaign.findUnique({ where: { id: campaignId } });
+  check("opening a manual scene closes the previous scene atomically",
+    nextScene.status === 201 && openScenes.length === 1 && afterOpen?.currentScene === "The train yard");
+  const closeScene = await req(`/api/campaigns/${campaignId}/story`, {
+    method: "PATCH", body: JSON.stringify({ resource: "scenes", id: nextScene.data?.scene?.id }),
+  }, sessionA);
+  const afterClose = await prisma.campaign.findUnique({ where: { id: campaignId } });
+  check("closing the current scene clears campaign title",
+    closeScene.status === 200 && afterClose?.currentScene === null &&
+    (await prisma.scene.findUnique({ where: { id: nextScene.data?.scene?.id } }))?.open === false);
 
   const badTask = await req(`/api/campaigns/${campaignId}/story`,
     json({ resource: "tasks", name: "Bad", skills: [] }), sessionA);
   check("invalid task rejected", badTask.status === 400, String(badTask.status));
+
+  // 6b. Campaign knowledge & prep (facts, arcs, beats, clocks, agendas)
+  const fact = await req(`/api/campaigns/${campaignId}/story`,
+    json({ resource: "facts", category: "Location", text: "The rail line never stops at night", importance: 3 }), sessionA);
+  const arc = await req(`/api/campaigns/${campaignId}/story`,
+    json({ resource: "arcs", name: "The Ghost Train", goal: "Find who drives it" }), sessionA);
+  const beat = await req(`/api/campaigns/${campaignId}/story`,
+    json({ resource: "beats", title: "The train stops", arcId: arc.data?.arc?.id }), sessionA);
+  const clock = await req(`/api/campaigns/${campaignId}/story`,
+    json({ resource: "clocks", name: "Dawn breaks", max: 6 }), sessionA);
+  check(
+    "story: facts/arcs/beats/clocks",
+    [fact, arc, beat, clock].every((r) => r.status === 201),
+    [fact.status, arc.status, beat.status, clock.status].join(","),
+  );
+  check("fact without a valid category rejected",
+    (await req(`/api/campaigns/${campaignId}/story`,
+      json({ resource: "facts", category: "Vibe", text: "Nope" }), sessionA)).status === 400);
+
+  const agenda = await req(`/api/campaigns/${campaignId}/story`, {
+    method: "PATCH",
+    body: JSON.stringify({
+      resource: "agendas",
+      id: cast.data?.cast?.id,
+      agenda: "Keep the rail line quiet",
+      plan: "Bribe the station master",
+    }),
+  }, sessionA);
+  const factPatch = await req(`/api/campaigns/${campaignId}/story`, {
+    method: "PATCH",
+    body: JSON.stringify({ resource: "facts", id: fact.data?.fact?.id, status: "Archived" }),
+  }, sessionA);
+  const clockPatch = await req(`/api/campaigns/${campaignId}/story`, {
+    method: "PATCH",
+    body: JSON.stringify({ resource: "clocks", id: clock.data?.clock?.id, current: 2 }),
+  }, sessionA);
+  const beatPatch = await req(`/api/campaigns/${campaignId}/story`, {
+    method: "PATCH",
+    body: JSON.stringify({ resource: "beats", id: beat.data?.beat?.id, status: "Ready" }),
+  }, sessionA);
+  const arcPatch = await req(`/api/campaigns/${campaignId}/story`, {
+    method: "PATCH",
+    body: JSON.stringify({ resource: "arcs", id: arc.data?.arc?.id, status: "Active" }),
+  }, sessionA);
+  check(
+    "knowledge & prep edits persist",
+    agenda.data?.cast?.agenda === "Keep the rail line quiet" &&
+      factPatch.data?.fact?.status === "Archived" &&
+      clockPatch.data?.clock?.current === 2 &&
+      beatPatch.data?.beat?.status === "Ready" &&
+      arcPatch.data?.arc?.status === "Active",
+  );
+  check("archived facts leave the searchable memory",
+    (await prisma.loreChunk.count({ where: { campaignId, source: "Fact", sourceId: fact.data?.fact?.id } })) === 0);
+
+  const stateWithKnowledge = await req(`/api/campaigns/${campaignId}`, {}, sessionA);
+  check(
+    "GET campaign state carries knowledge and prep",
+    Array.isArray(stateWithKnowledge.data.campaign.facts) &&
+      stateWithKnowledge.data.campaign.facts.length === 1 &&
+      stateWithKnowledge.data.campaign.arcs.length === 1 &&
+      stateWithKnowledge.data.campaign.beats.length === 1 &&
+      stateWithKnowledge.data.campaign.clocks.length === 1 &&
+      stateWithKnowledge.data.campaign.storyChars[0]?.plan === "Bribe the station master",
+  );
+
+  const foreignFact = await req(`/api/campaigns/${campaignId}/story`,
+    json({ resource: "facts", category: "Location", text: "Someone else's secret" }), sessionB);
+  const foreignFactEdit = await req(`/api/campaigns/${campaignId}/story`, {
+    method: "PATCH",
+    body: JSON.stringify({ resource: "facts", id: fact.data?.fact?.id, text: "Hijacked" }),
+  }, sessionB);
+  check("other user cannot touch your knowledge",
+    foreignFact.status === 404 && foreignFactEdit.status === 404,
+    `${foreignFact.status},${foreignFactEdit.status}`);
+
+  const delFact = await req(`/api/campaigns/${campaignId}/story?resource=facts&itemId=${fact.data?.fact?.id}`,
+    { method: "DELETE" }, sessionA);
+  const delClock = await req(`/api/campaigns/${campaignId}/story?resource=clocks&itemId=${clock.data?.clock?.id}`,
+    { method: "DELETE" }, sessionA);
+  check("knowledge & prep delete",
+    delFact.status === 200 && delClock.status === 200 &&
+    (await prisma.campaignFact.count({ where: { campaignId } })) === 0 &&
+    (await prisma.storyClock.count({ where: { campaignId } })) === 0);
 
   // 7. Oracle — every kind
   const oracleKinds: Array<[string, object, (r: any) => boolean]> = [
@@ -260,6 +357,10 @@ async function main() {
   }, sessionA);
   check("PATCH character XP/bennies/wounds", xpPatch.data?.character?.xp === 6 && xpPatch.data?.character?.wounds === 1,
     `xp=${xpPatch.data?.character?.xp} wounds=${xpPatch.data?.character?.wounds}`);
+  const shakenPatch = await req(`/api/campaigns/${campaignId}/characters`, {
+    method: "PATCH", body: JSON.stringify({ id: charId, shaken: true }),
+  }, sessionA);
+  check("PATCH character persists shaken", shakenPatch.data?.character?.shaken === true);
 
   const badPatch = await req(`/api/campaigns/${campaignId}/characters`, {
     method: "PATCH",

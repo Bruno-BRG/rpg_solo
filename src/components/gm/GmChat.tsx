@@ -13,6 +13,7 @@ import { Markdown } from "./Markdown";
 export interface Turn {
   role: "user" | "assistant";
   content: string;
+  status?: "complete" | "failed";
   tools?: Array<{ name: string; result: unknown }>;
 }
 
@@ -26,7 +27,7 @@ export function GmChat({
   campaignId: string;
   initialTurns?: Turn[];
   onChaosChange?: (rank: number) => void;
-  onSceneChange?: (sceneId: string) => void;
+  onSceneChange?: (sceneId: string | null, title?: string | null) => void;
   onTurnDone?: () => void;
 }) {
   const [turns, setTurns] = useState<Turn[]>(initialTurns ?? []);
@@ -106,7 +107,7 @@ export function GmChat({
             tools = data.toolTrace ?? [];
             setTurns((t) => {
               const copy = [...t];
-              copy[copy.length - 1] = { role: "assistant", content: data.content || assistantText, tools };
+              copy[copy.length - 1] = { role: "assistant", content: data.content ?? assistantText, tools, status: data.status ?? "complete" };
               return copy;
             });
             // World-state effects (chaos dial, freshly opened scene).
@@ -114,7 +115,9 @@ export function GmChat({
               onChaosChange?.(data.effects.chaosRank);
             }
             if (typeof data.effects?.sceneId === "string") {
-              onSceneChange?.(data.effects.sceneId);
+              onSceneChange?.(data.effects.sceneId, data.effects.sceneTitle ?? null);
+            } else if (data.effects?.sceneId === null) {
+              onSceneChange?.(null, data.effects.sceneTitle ?? null);
             }
             onTurnDone?.();
           } else if (eventName === "error") {
@@ -173,8 +176,8 @@ export function GmChat({
               }`}
             >
               {turn.role === "assistant" && (
-                <span className="mb-1 block text-[10px] font-semibold uppercase tracking-widest text-ink-400">
-                  GM
+                <span className={`mb-1 block text-[10px] font-semibold uppercase tracking-widest ${turn.status === "failed" ? "text-red-600" : "text-ink-400"}`}>
+                  {turn.status === "failed" ? "GM · turn failed" : "GM"}
                 </span>
               )}
               {turn.role === "assistant" ? (
@@ -269,6 +272,21 @@ function formatToolCall(name: string, result: unknown): string {
         .join(" ")}`;
     case "search_lore":
       return `Memory: ${(r.results ?? []).length} hits`;
+    case "remember_facts":
+      if (r.archived) return `🧠 Forgot: ${String(r.archived).slice(0, 48)}`;
+      if (r.updated) return `🧠 Updated fact: ${String(r.updated.text ?? "").slice(0, 48)}`;
+      if (r.facts) return `🧠 Facts: ${(r.facts ?? []).length} known`;
+      return `🧠 Facts: ${(r.recorded ?? []).length} recorded${
+        (r.skippedDuplicates ?? []).length ? `, ${(r.skippedDuplicates ?? []).length} already known` : ""
+      }`;
+    case "plan_story":
+      if (r.arc) return `🗺 Arc: ${r.arc.name} (${r.arc.status})`;
+      if (r.beat) return `🗺 Event: ${r.beat.title} (${r.beat.status})`;
+      if (r.clock) return `🗺 Clock: ${r.clock.name} ${r.clock.current}/${r.clock.max}`;
+      if (r.npc) return `🗺 Agenda: ${r.npc.name}`;
+      if (r.removed) return `🗺 Removed: ${String(r.removed).slice(0, 48)}`;
+      if (r.cleared) return `🗺 Cleared agenda: ${r.cleared}`;
+      return `🗺 Prep ${r.section ?? "updated"}`;
     default:
       return name.replace(/_/g, " ");
   }

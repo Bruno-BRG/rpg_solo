@@ -25,6 +25,10 @@ export async function GET(_request: Request, { params }: Params) {
       scenes: { orderBy: { createdAt: "desc" }, take: 10 },
       tasks: { orderBy: { updatedAt: "desc" }, take: 10 },
       chatTurns: { orderBy: { createdAt: "desc" }, take: 40 },
+      facts: { orderBy: [{ importance: "desc" }, { createdAt: "asc" }] },
+      arcs: { orderBy: [{ order: "asc" }, { createdAt: "asc" }] },
+      beats: { orderBy: [{ order: "asc" }, { createdAt: "asc" }] },
+      clocks: { orderBy: { createdAt: "asc" } },
     },
   });
   if (!campaign) return NextResponse.json({ error: "Not found" }, { status: 404 });
@@ -65,6 +69,16 @@ export async function PATCH(request: Request, { params }: Params) {
     where: { id: params.id },
     data: parsed.data,
   });
+  if (parsed.data.settingNotes !== undefined) {
+    const { ingestDocument } = await import("@/lib/rag/lore");
+    await ingestDocument(
+      process.env.OPENAI_API_KEY ?? null,
+      params.id,
+      "SettingNotes",
+      params.id,
+      parsed.data.settingNotes,
+    ).catch(() => undefined);
+  }
   return NextResponse.json({ campaign });
 }
 

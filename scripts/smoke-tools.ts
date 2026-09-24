@@ -134,6 +134,10 @@ async function main() {
     ["roll_damage", { weaponDice: [100], toughness: 5 }],
     ["ask_oracle", { question: "x", likelihood: "Maybe" }],
     ["roll_initiative", { participants: [] }],
+    ["remember_facts", { action: "add", facts: [{ category: "Vibe", text: "not a real category" }] }],
+    ["remember_facts", { action: "add" }],
+    ["plan_story", { section: "dreams", action: "add", name: "x" }],
+    ["plan_story", { section: "arcs", action: "add" }],
   ] as const) {
     let rejected = false;
     try { await executeTool(name, JSON.stringify(args), ctx); } catch { rejected = true; }
@@ -146,7 +150,7 @@ async function main() {
 
   // ── Tool definitions / JSON schemas ──────────────────────
   const defs = toolDefinitions();
-  check("20 tools exported", defs.length === 20, `${defs.length} tools`);
+  check("22 tools exported", defs.length === 22, `${defs.length} tools`);
 
   const byName = Object.fromEntries(defs.map((d) => [d.function.name, d.function.parameters]));
   const initSchema = byName.roll_initiative as { properties: { participants: { type: string; items: { type: string } } }; required: string[] };
@@ -161,6 +165,18 @@ async function main() {
   check(
     "roll_damage JSON schema types array + optional boolean",
     dmgSchema.properties.weaponDice.type === "array" && !dmgSchema.required.includes("isExtra"),
+  );
+
+  const factsSchema = byName.remember_facts as {
+    properties: { facts: { type: string; items: { type: string } } };
+    required: string[];
+  };
+  check(
+    "remember_facts JSON schema has an array of fact objects",
+    factsSchema.properties.facts.type === "array" &&
+      factsSchema.properties.facts.items.type === "object" &&
+      factsSchema.required.includes("action") &&
+      !factsSchema.required.includes("facts"),
   );
 
   const missing = defs.filter((d) => !d.function.description || d.function.description.length < 10);

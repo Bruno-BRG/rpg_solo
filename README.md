@@ -17,11 +17,12 @@ A solo RPG platform: **Savage Worlds** rules engine, the **Mythic GM Emulator** 
 | **d100 tables** | 27 built-in tables across fantasy/scifi/western/horror/noir/universal + user-authored custom tables (CRUD, shareable, rollable by player and AI). |
 | **NPC generator** | Genre-aware NPC with name, occupation, appearance, demeanor, Motivation and Mythic stance (Friendly/Neutral/Hostile). |
 | **Journal** | The GM writes narrative journal entries as you play; entries form the story timeline. |
-| **RAG memory** | Setting notes, character backgrounds and journal entries are chunked, embedded (pgvector) and searchable by the GM. |
+| **Campaign memory** | The GM keeps a notebook of durable facts (people, places, factions, items, promises, rulings, mysteries) recorded with a tool as play goes. Facts, threads, cast, party state and journal recaps are replayed every turn, and setting notes, backgrounds, journal entries and facts are indexed for retrieval. Search uses pgvector embeddings when available and text search otherwise; older campaigns are indexed on first access. The **Memory** tab lists and edits every fact. |
+| **GM prep** | The GM prepares ahead like a table GM: story arcs, upcoming events, tension clocks and NPC agendas, managed with a tool. The prep is a guide the oracle and the player's choices can overturn, never a script. The **Prep** tab shows it behind a reveal button, since it is full of spoilers. |
 | **Multi-user auth** | Email + password accounts (Auth.js, bcrypt, JWT sessions). |
 | **Per-campaign AI settings** | Model, GM style/persona and narrative temperature per campaign (fall back to user defaults); campaigns can be deleted with typed confirmation. |
 | **AI providers** | OpenAI API (official) or ChatGPT Plus subscription via Codex-style OAuth. |
-| **Test suite** | `npm run test` covers rules, tools, DB and a full GM loop with a fake provider; `npm run test:api` runs the HTTP end-to-end suite. |
+| **Test suite** | `npm run test` covers rules, tools, DB and a full GM loop with a fake provider (including the knowledge digest, fact capture and prep persistence); `npm run test:api` runs the HTTP end-to-end suite. |
 
 ## Stack
 
@@ -104,6 +105,7 @@ src/
 │   │   ├── tools.ts        #   function-calling schemas + executors
 │   │   └── factory.ts      #   resolve + build provider per user
 │   ├── gm/engine.ts        # GM orchestration (context → tools → effects)
+│   ├── gm/knowledge.ts     # campaign notebook digest (facts + prep, budgeted)
 │   ├── rules/              # Savage Worlds: dice, ranks, derived stats
 │   ├── oracle/             # Mythic: fate chart, random events, scenes
 │   └── rag/                # chunk → embed → pgvector search
@@ -115,7 +117,7 @@ src/
 - **Strategy pattern for AI providers** — game logic never knows which backend is active; adding a provider = one file.
 - **Tools as Commands** — each AI tool has a Zod schema (validation + JSON schema for the model) and a pure executor; side effects are applied by the GM engine.
 - **Mythic oracle as a service** — the same fate chart serves the UI buttons and the AI's `ask_oracle` tool; every consultation is logged (`OracleLog`).
-- **RAG via pgvector** — embeddings stored with `vector(1536)`; cosine search through raw SQL; keyword fallback when embeddings are unavailable.
+- **RAG via pgvector** — embeddings stored with `vector(1536)`; cosine search through raw SQL, with text search for sources without embeddings or when the embedding service is unavailable.
 
 ## Environment variables
 

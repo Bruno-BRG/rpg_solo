@@ -10,7 +10,7 @@
  * Run: npx tsx scripts/smoke-gm.ts
  */
 import bcrypt from "bcryptjs";
-import type { AIProvider, ChatMessage, ChatOptions } from "../src/lib/ai/provider";
+import type { AIProvider, ChatMessage, ChatOptions, ToolCall } from "../src/lib/ai/provider";
 import { runGmTurn, OPENING_DIRECTIVE } from "../src/lib/gm/engine";
 import { prisma } from "../src/lib/db";
 
@@ -32,6 +32,7 @@ class FakeProvider implements AIProvider {
     this.seen.push(options.messages.map((m) => ({ ...m })));
 
     if (this.calls === 1) {
+      yield { content: "The dice turn. " };
       yield {
         toolCalls: [
           { id: "t1", name: "setup_scene", arguments: JSON.stringify({ applyToScene: false }) },
@@ -54,11 +55,19 @@ class FakeProvider implements AIProvider {
           { id: "t18", name: "update_character", arguments: JSON.stringify({ name: "Hero", wounds: 1, bennies: 2 }) },
           { id: "t19", name: "save_journal_entry", arguments: JSON.stringify({ title: "Fire on the Docks", body: "Narrative body.", summary: "The docks burned; a lifeboat was lowered." }) },
           { id: "t20", name: "close_scene", arguments: JSON.stringify({ reason: "the smoke clears" }) },
+          { id: "t21", name: "remember_facts", arguments: JSON.stringify({ action: "add", facts: [
+            { category: "Location", text: "The Ember Coast is ruled by the Tide Queen", importance: 3 },
+            { category: "Promise", text: "The party owes the Dock Warden a favour" },
+          ] }) },
+          { id: "t22", name: "plan_story", arguments: JSON.stringify({ section: "arcs", action: "add", name: "The Drowned Bell", goal: "Silence the bell" }) },
+          { id: "t23", name: "plan_story", arguments: JSON.stringify({ section: "beats", action: "add", title: "The bell rings again", detail: "The harbour floods" }) },
+          { id: "t24", name: "plan_story", arguments: JSON.stringify({ section: "clocks", action: "add", name: "Ritual completes", max: 6 }) },
         ],
       };
       return;
     }
-    yield { content: "Flames climb the mast as the lifeboat drops. Somewhere below, a bell starts ringing — twice, then silence. What do you do?" };
+    yield { content: "Flames climb the mast as the lifeboat drops. " };
+    yield { content: "Somewhere below, a bell starts ringing — twice, then silence. What do you do?" };
   }
 
   async chat(): Promise<never> {
@@ -68,6 +77,24 @@ class FakeProvider implements AIProvider {
   async listModels() {
     return ["fake-1"];
   }
+}
+
+/** A scripted provider for rejection and interrupted-follow-up cases. */
+class FailureProvider implements AIProvider {
+  readonly name = "failure-fake";
+  calls = 0;
+  constructor(private readonly toolCalls: ToolCall[], private readonly failAfterTools = false) {}
+  async *streamChat(_options: ChatOptions) {
+    this.calls++;
+    if (this.calls === 1) {
+      yield { toolCalls: this.toolCalls };
+      return;
+    }
+    if (this.failAfterTools) throw new Error("scripted provider interruption");
+    yield { content: "unexpected continuation" };
+  }
+  async chat(): Promise<never> { throw new Error("not used"); }
+  async listModels() { return ["fake-failure"]; }
 }
 
 const stamp = Date.now();
@@ -101,8 +128,9 @@ async function main() {
   );
 
   check("turn produced narration", result.content.includes("lifeboat"), result.content.slice(0, 60));
-  check("streaming delivered deltas", deltas.length === 0 || deltas.join("").length > 0, `${deltas.length} deltas`);
-  check("all 20 tools traced", result.toolTrace.length === 20, `${result.toolTrace.length} calls`);
+  check("streaming delivered deltas across tool calls", deltas.length === 3, `${deltas.length} deltas`);
+  check("all 24 tools traced", result.toolTrace.length === 24, `${result.toolTrace.length} calls`);
+  check("streamed text exactly matches stored narration", deltas.join("") === result.content, `stream=${deltas.join("").length}, stored=${result.content.length}`);
   check("no tool errored", !result.toolTrace.some((t) => (t.result as { error?: string })?.error),
     result.toolTrace.filter((t) => (t.result as { error?: string })?.error).map((t) => t.name).join(","));
 
@@ -121,6 +149,10 @@ async function main() {
       tasks: true,
       chatTurns: { orderBy: { createdAt: "asc" } },
       characters: true,
+      facts: true,
+      arcs: true,
+      beats: true,
+      clocks: true,
     },
   });
   if (!after) throw new Error("campaign vanished");
@@ -136,6 +168,22 @@ async function main() {
   check("journal entry persisted", after.journal.length === 1 && after.journal[0].title === "Fire on the Docks");
   check("thread persisted", after.threads.some((t) => t.summary === "Who set the fire?"));
   check("cast persisted", after.storyChars.some((c) => c.name === "Dock Warden" && c.stance === "Hostile"));
+  check(
+    "facts recorded by the GM persist",
+    after.facts.length === 2 && after.facts.some((f) => f.importance === 3),
+  );
+  check(
+    "prep persisted from the opening turn",
+    after.arcs.length === 1 && after.beats.length === 1 && after.clocks.length === 1,
+  );
+  const closeTrace = result.toolTrace.find((t) => t.name === "close_scene")?.result as
+    | { guidance?: string }
+    | undefined;
+  check(
+    "closing a scene asks for a prep revision",
+    !!closeTrace?.guidance?.includes("plan_story"),
+    closeTrace?.guidance?.slice(0, 48) ?? "no guidance",
+  );
   const advanceTrace = result.toolTrace.find((t) => t.name === "advance_dramatic_task")
     ?.result as { roll?: { criticalFailure?: boolean } } | undefined;
   // A critical failure (2.8%) banks −1 token → 0; otherwise progress.
@@ -174,6 +222,7 @@ async function main() {
       after.chatTurns[1].role === "assistant",
     after.chatTurns.map((t) => t.role).join(","),
   );
+  check("persisted narration exactly matches stream", after.chatTurns[1]?.content === deltas.join(""));
 
   // ── Turn 2: history must replay as context ───────────────
   // Turn 1 consumed two provider calls (tools pass + prose pass),
@@ -194,13 +243,69 @@ async function main() {
   check("system prompt carries campaign state",
     systemPrompt.includes("GM Loop Campaign") &&
       systemPrompt.includes("CHAOS RANK: 8") &&
-      systemPrompt.includes("PLAYER CHARACTERS: Hero") &&
+      systemPrompt.includes("PLAYER CHARACTERS:") &&
+      systemPrompt.includes("Hero (") &&
       systemPrompt.includes("DRAMATIC TASKS IN PROGRESS"),
   );
   check("system prompt lists genre tables", systemPrompt.includes("fantasy-encounter"));
+  check(
+    "facts recorded in turn 1 reach the turn 2 notebook",
+    systemPrompt.includes("CAMPAIGN KNOWLEDGE") && systemPrompt.includes("Tide Queen"),
+  );
+  check(
+    "prep from turn 1 reaches the turn 2 prompt",
+    systemPrompt.includes("YOUR PREP") && systemPrompt.includes("The Drowned Bell"),
+  );
 
   const turnsAfter2 = await prisma.chatTurn.count({ where: { campaignId: campaign.id } });
   check("turn 2 persisted too", turnsAfter2 === 4, `${turnsAfter2} turns`);
+
+  // ── A fact-heavy campaign must not flood the prompt ──────
+  const heavyCampaign = await prisma.campaign.create({
+    data: { userId: user.id, name: "GM Heavy Campaign", genre: "fantasy" },
+  });
+  await prisma.campaignFact.createMany({
+    data: Array.from({ length: 200 }, (_, i) => ({
+      campaignId: heavyCampaign.id,
+      category: "Event",
+      text: `Established detail number ${i} about the Ember Coast and its people`,
+      importance: 1,
+    })),
+  });
+  const heavyIndex = provider.seen.length;
+  await runGmTurn(provider, user.id, heavyCampaign.id, "What do I remember?");
+  const heavyPrompt = provider.seen[heavyIndex][0].content;
+  const knowledgeBlock = heavyPrompt.split("CAMPAIGN KNOWLEDGE")[1]?.split("YOUR PREP")[0] ?? "";
+  check(
+    "digest stays bounded in a fact-heavy campaign",
+    knowledgeBlock.length > 0 && knowledgeBlock.length <= 4000,
+    `${knowledgeBlock.length} chars for 200 facts`,
+  );
+  check("truncation is announced to the GM", heavyPrompt.includes("more not shown"));
+
+  // ── Rejected tool must not mutate; later provider failure keeps earlier effects ──
+  const failureCampaign = await prisma.campaign.create({
+    data: { userId: user.id, name: "GM Failure Campaign", chaosRank: 4 },
+  });
+  const invalid = new FailureProvider([
+    { id: "bad-open", name: "open_scene", arguments: JSON.stringify({ title: "" }) },
+  ]);
+  const invalidResult = await runGmTurn(invalid, user.id, failureCampaign.id, "Try the invalid scene.");
+  const invalidState = await prisma.campaign.findUnique({ where: { id: failureCampaign.id }, include: { scenes: true, chatTurns: true } });
+  check("invalid tool fails the turn", invalidResult.status === "failed");
+  check("invalid tool leaves campaign unchanged", invalidState?.chaosRank === 4 && invalidState.scenes.length === 0);
+  check("invalid turn failure is persisted", invalidState?.chatTurns.some((t) => t.role === "assistant" && t.status === "failed") ?? false);
+
+  const partial = new FailureProvider([
+    { id: "valid-chaos", name: "set_chaos_rank", arguments: JSON.stringify({ rank: 7, reason: "scripted consequence" }) },
+  ], true);
+  const partialDeltas: string[] = [];
+  const partialResult = await runGmTurn(partial, user.id, failureCampaign.id, "Raise the danger.", (d) => partialDeltas.push(d));
+  const partialState = await prisma.campaign.findUnique({ where: { id: failureCampaign.id }, include: { chatTurns: { orderBy: { createdAt: "desc" }, take: 1 } } });
+  check("completed effects survive provider failure", partialState?.chaosRank === 7);
+  check("provider failure is recorded on assistant turn", partialResult.status === "failed" && partialState?.chatTurns[0]?.status === "failed");
+  check("failed narration exactly matches persisted text", partialState?.chatTurns[0]?.content === partialResult.content && partialResult.content.includes("scripted provider interruption"));
+  check("failed turn stream exactly matches persisted text", partialDeltas.join("") === partialResult.content);
 }
 
 main()
@@ -209,7 +314,7 @@ main()
     console.error("  ✘ smoke-gm crashed:", error);
   })
   .finally(async () => {
-    await prisma.campaign.deleteMany({ where: { name: "GM Loop Campaign" } });
+    await prisma.campaign.deleteMany({ where: { name: { startsWith: "GM " } } });
     await prisma.user.deleteMany({ where: { email } });
     await prisma.$disconnect();
     console.log(failures === 0 ? "\n✅ smoke-gm: all checks passed" : `\n❌ smoke-gm: ${failures} failure(s)`);

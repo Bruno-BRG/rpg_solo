@@ -4,6 +4,7 @@
  * non-player characters. Also where scenes are opened.
  */
 import { useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
 
 interface Thread { id: string; summary: string; status: string; tension: number; }
 interface Cast { id: string; name: string; description: string | null; stance: string; status: string; }
@@ -26,6 +27,7 @@ export function ThreadsPanel({
   campaignId: string;
   refreshKey?: number;
 }) {
+  const router = useRouter();
   const [threads, setThreads] = useState<Thread[]>([]);
   const [cast, setCast] = useState<Cast[]>([]);
   const [scenes, setScenes] = useState<Scene[]>([]);
@@ -55,6 +57,7 @@ export function ThreadsPanel({
       body: JSON.stringify(body),
     });
     await refresh();
+    router.refresh();
   }
 
   async function remove(resource: string, itemId: string) {
@@ -62,6 +65,17 @@ export function ThreadsPanel({
       method: "DELETE",
     });
     await refresh();
+    if (resource === "scenes") router.refresh();
+  }
+
+  async function closeScene(id: string) {
+    await fetch(`/api/campaigns/${campaignId}/story`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ resource: "scenes", id }),
+    });
+    await refresh();
+    router.refresh();
   }
 
   return (
@@ -84,7 +98,10 @@ export function ThreadsPanel({
                 {s.title} <span className="tag ml-1">{s.type}</span>
                 {!s.open && <span className="ml-1 text-ink-400">(closed)</span>}
               </span>
-              <button className="text-ink-400 hover:text-accent" onClick={() => remove("scenes", s.id)}>×</button>
+              <div className="flex items-center gap-2">
+                {s.open && <button className="btn-ghost" onClick={() => closeScene(s.id)}>Close</button>}
+                <button aria-label={`Delete ${s.title}`} className="text-ink-400 hover:text-accent" onClick={() => remove("scenes", s.id)}>×</button>
+              </div>
             </li>
           ))}
           {scenes.length === 0 && <p className="text-sm text-ink-500">No scenes yet.</p>}
