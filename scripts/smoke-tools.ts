@@ -138,6 +138,11 @@ async function main() {
     ["remember_facts", { action: "add" }],
     ["plan_story", { section: "dreams", action: "add", name: "x" }],
     ["plan_story", { section: "arcs", action: "add" }],
+    ["start_encounter", { name: "" }],
+    ["set_terrain", { cells: [] }],
+    ["combat_move", { name: "Kael", x: -1, y: 0 }],
+    ["attack", { attacker: "Kael", target: "Thug", kind: "spell" }],
+    ["end_encounter", { outcome: 42 }],
   ] as const) {
     let rejected = false;
     try { await executeTool(name, JSON.stringify(args), ctx); } catch { rejected = true; }
@@ -150,7 +155,7 @@ async function main() {
 
   // ── Tool definitions / JSON schemas ──────────────────────
   const defs = toolDefinitions();
-  check("22 tools exported", defs.length === 22, `${defs.length} tools`);
+  check("29 tools exported", defs.length === 29, `${defs.length} tools`);
 
   const byName = Object.fromEntries(defs.map((d) => [d.function.name, d.function.parameters]));
   const initSchema = byName.roll_initiative as { properties: { participants: { type: string; items: { type: string } } }; required: string[] };
@@ -177,6 +182,18 @@ async function main() {
       factsSchema.properties.facts.items.type === "object" &&
       factsSchema.required.includes("action") &&
       !factsSchema.required.includes("facts"),
+  );
+
+  const attackSchema = byName.attack as {
+    properties: { attacker: { type: string }; ranges?: { type: string }; weaponDice?: { type: string } };
+    required: string[];
+  };
+  check(
+    "attack JSON schema requires attacker and target",
+    attackSchema.required.includes("attacker") &&
+      attackSchema.required.includes("target") &&
+      attackSchema.properties.ranges?.type === "object" &&
+      !attackSchema.required.includes("ranges"),
   );
 
   const missing = defs.filter((d) => !d.function.description || d.function.description.length < 10);

@@ -232,7 +232,9 @@ function formatToolCall(name: string, result: unknown): string {
     case "roll_damage":
       return `⚔ ${r.summary ?? `${r.total} vs TN ${r.toughness}`}`;
     case "roll_initiative":
-      return `Initiative: ${(r.round ?? []).map((e: any) => e.name).join(" > ")}`;
+      return `Initiative: ${(r.order ?? r.round ?? [])
+        .map((e: any) => e.name + (e.card?.label ? ` ${e.card.label}` : ""))
+        .join(" > ")}`;
     case "ask_oracle":
       return `Oracle: ${r.answer} (${r.roll}/${r.threshold})${r.randomEvent ? " ⚡" : ""}`;
     case "random_event":
@@ -287,6 +289,20 @@ function formatToolCall(name: string, result: unknown): string {
       if (r.removed) return `🗺 Removed: ${String(r.removed).slice(0, 48)}`;
       if (r.cleared) return `🗺 Cleared agenda: ${r.cleared}`;
       return `🗺 Prep ${r.section ?? "updated"}`;
+    case "start_encounter":
+      return `⚔ Encounter: ${r.encounter?.name ?? "started"} (${(r.combatants ?? []).length} pieces)`;
+    case "set_terrain":
+      return `⚔ Terrain: ${r.terrainCells ?? 0} cells`;
+    case "place_combatant":
+      return `⚔ ${r.combatant?.name ?? "piece"} placed`;
+    case "combat_move":
+      return `⚔ ${r.name}: ${r.cost}/${r.allowance} squares (${r.remaining} left)`;
+    case "attack":
+      return `⚔ ${r.attacker} → ${r.target}: ${r.roll?.label ?? ""} vs ${r.targetNumber} — ${r.damage ?? "miss"}`;
+    case "combat_status":
+      return `⚔ Round ${r.encounter?.round ?? "?"} · ${(r.combatants ?? []).length} pieces`;
+    case "end_encounter":
+      return `⚔ Ended: ${r.ended ?? "encounter"}`;
     default:
       return name.replace(/_/g, " ");
   }

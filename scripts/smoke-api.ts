@@ -368,6 +368,105 @@ async function main() {
   }, sessionA);
   check("PATCH validation rejects negative XP", badPatch.status === 400, String(badPatch.status));
 
+  // 9b. Creation budgets and the tactical grid
+  const illegalSheet = await req(`/api/campaigns/${campaignId}/characters`, json({
+    name: "Too Greedy", agility: 12, smarts: 12, spirit: 12, strength: 12, vigor: 12,
+  }), sessionA);
+  check(
+    "an illegal sheet is refused with reasons",
+    illegalSheet.status === 400 &&
+      Array.isArray(illegalSheet.data?.details) &&
+      illegalSheet.data.details.length > 0,
+    JSON.stringify(illegalSheet.data?.details ?? []),
+  );
+
+  const legalSheet = await req(`/api/campaigns/${campaignId}/characters`, json({
+    name: "Rules Legal", agility: 6, vigor: 6,
+    skills: { Fighting: 6, Shooting: 8, Notice: 4 }, edges: ["Luck"],
+  }), sessionA);
+  check("a legal sheet is accepted", legalSheet.status === 201, String(legalSheet.status));
+
+  const opened = await req(`/api/campaigns/${campaignId}/encounter`, json({
+    resource: "encounter",
+    name: "Train yard scrap",
+    width: 8,
+    height: 8,
+    terrain: [{ x: 3, y: 3, kind: "wall" }, { x: 0, y: 0, kind: "cover" }],
+    combatants: [
+      { name: "Wilhelmina Vance", kind: "PlayerCharacter", characterId: charId, x: 1, y: 1 },
+      { name: "Bravo", kind: "Extra", x: 2, y: 2, isExtra: true, toughness: 5 },
+    ],
+  }), sessionA);
+  check(
+    "POST encounter opens a grid",
+    opened.status === 201 && opened.data?.combatants?.length === 2,
+    String(opened.status),
+  );
+  const encounterId = opened.data?.encounter?.id as string;
+  const pcPiece = opened.data?.combatants?.find((c: any) => c.name === "Wilhelmina Vance");
+  const bravoPiece = opened.data?.combatants?.find((c: any) => c.name === "Bravo");
+
+  const board = await req(`/api/campaigns/${campaignId}/encounter`, {}, sessionA);
+  check(
+    "GET encounter returns the board",
+    board.status === 200 &&
+      board.data?.encounter?.terrain?.length === 2 &&
+      board.data?.combatants?.length === 2,
+  );
+
+  const dealtRes = await req(`/api/campaigns/${campaignId}/encounter`, {
+    method: "PATCH",
+    body: JSON.stringify({ resource: "encounter", dealRound: true }),
+  }, sessionA);
+  const dealtPieces = await prisma.combatant.findMany({ where: { encounterId } });
+  check(
+    "PATCH deals the next round",
+    dealtRes.status === 200 &&
+      dealtRes.data?.encounter?.round === 2 &&
+      dealtPieces.every((piece) => piece.card !== null),
+    "round " + String(dealtRes.data?.encounter?.round),
+  );
+
+  const hurt = await req(`/api/campaigns/${campaignId}/encounter`, {
+    method: "PATCH",
+    body: JSON.stringify({ resource: "combatants", id: pcPiece?.id, wounds: 2, shaken: true }),
+  }, sessionA);
+  const sheetAfter = await prisma.character.findUnique({ where: { id: charId } });
+  check(
+    "wounds sync to the character sheet",
+    hurt.status === 200 && sheetAfter?.wounds === 2 && sheetAfter?.shaken === true,
+    "wounds=" + String(sheetAfter?.wounds) + " shaken=" + String(sheetAfter?.shaken),
+  );
+
+  const painted = await req(`/api/campaigns/${campaignId}/encounter`, json({
+    resource: "terrain",
+    cells: [{ x: 5, y: 5, kind: "difficult" }],
+  }), sessionA);
+  check(
+    "POST terrain paints the board",
+    painted.status === 200 && painted.data?.encounter?.terrain?.length === 3,
+    String(painted.data?.encounter?.terrain?.length),
+  );
+
+  const foreignBoard = await req(`/api/campaigns/${campaignId}/encounter`, {}, sessionB);
+  check("another user cannot read the grid", foreignBoard.status === 404, String(foreignBoard.status));
+
+  const dropped = await req(
+    `/api/campaigns/${campaignId}/encounter?resource=combatants&itemId=${bravoPiece?.id}`,
+    { method: "DELETE" },
+    sessionA,
+  );
+  check(
+    "DELETE removes a piece",
+    dropped.status === 200 && (await prisma.combatant.count({ where: { encounterId } })) === 1,
+  );
+
+  const closedGrid = await req(`/api/campaigns/${campaignId}/encounter?resource=encounter`, { method: "DELETE" }, sessionA);
+  check(
+    "DELETE ends the encounter",
+    closedGrid.status === 200 && (await prisma.encounter.count({ where: { id: encounterId } })) === 0,
+  );
+
   // 10. Dice endpoint
   const dice = await req("/api/dice", json({ mode: "trait", dieStep: 8, targetNumber: 4 }), sessionA);
   check("POST /api/dice trait roll", dice.status === 200 && typeof dice.data?.result?.total === "number",

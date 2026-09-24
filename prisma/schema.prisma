@@ -113,6 +113,7 @@ model Campaign {
   arcs       StoryArc[]
   beats      StoryBeat[]
   clocks     StoryClock[]
+  encounters Encounter[]
 
   @@index([userId])
 }
@@ -175,6 +176,7 @@ model Character {
   updatedAt   DateTime @updatedAt
 
   campaign Campaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  combatants Combatant[]
 
   @@index([campaignId])
 }
@@ -260,6 +262,7 @@ model StoryCharacter {
   updatedAt  DateTime @updatedAt
 
   campaign Campaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  combatants Combatant[]
 
   @@index([campaignId])
 }
@@ -438,7 +441,97 @@ model StoryClock {
   @@index([campaignId, status])
 }
 
+
+// ── Tactical encounters (grid combat) ────────────────────────
+
+/// A tactical encounter fought on a square grid. One active per campaign.
+model Encounter {
+  id         String   @id @default(cuid())
+  campaignId String
+  /// Scene this fight belongs to, when it was opened from one.
+  sceneId    String?
+  name       String
+  /// Setup | Active | Ended
+  status     String   @default("Setup")
+  round      Int      @default(1)
+  /// Grid size in squares.
+  width      Int      @default(12)
+  height     Int      @default(12)
+  /// Terrain cells: [{ x, y, kind, label }] where kind is wall | cover | difficult | hazard.
+  terrain    Json     @default("[]")
+  /// Action Deck left for the next round: [{ rank, suit, joker, label }].
+  deck       Json     @default("[]")
+  /// Round history: [{ round, order: [{ name, card, joker }] }].
+  rounds     Json     @default("[]")
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  campaign   Campaign       @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  combatants Combatant[]
+  log        EncounterLog[]
+
+  @@index([campaignId, status])
+}
+
+/// One piece on the grid: a player character, a story character or an extra.
+model Combatant {
+  id               String  @id @default(cuid())
+  encounterId      String
+  name             String
+  /// PlayerCharacter | StoryCharacter | Extra
+  kind             String  @default("Extra")
+  /// Linked sheet, when this piece is a player character.
+  characterId      String?
+  /// Linked story character, when this piece is an NPC.
+  storyCharacterId String?
+  x                Int     @default(0)
+  y                Int     @default(0)
+  /// Footprint in squares (1 = 1x1).
+  size             Int     @default(1)
+  pace             Int     @default(6)
+  parry            Int     @default(2)
+  toughness        Int     @default(4)
+  wounds           Int     @default(0)
+  maxWounds        Int     @default(3)
+  shaken           Boolean @default(false)
+  bennies          Int     @default(0)
+  /// Extras are taken out by a single wound.
+  isExtra          Boolean @default(false)
+  /// Defending this round: +2 Parry against melee attacks.
+  defending        Boolean @default(false)
+  /// Card dealt this round: { rank, suit, joker, label }.
+  card             Json?
+  /// Active | Down | Out
+  status           String  @default("Active")
+  notes            String?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  encounter      Encounter       @relation(fields: [encounterId], references: [id], onDelete: Cascade)
+  character      Character?      @relation(fields: [characterId], references: [id], onDelete: SetNull)
+  storyCharacter StoryCharacter? @relation(fields: [storyCharacterId], references: [id], onDelete: SetNull)
+
+  @@index([encounterId])
+}
+
+/// One line of the combat history, newest last.
+model EncounterLog {
+  id          String   @id @default(cuid())
+  encounterId String
+  round       Int      @default(1)
+  /// Card | Move | Attack | Damage | Condition | Terrain | Note
+  kind        String
+  text        String
+  data        Json?
+  createdAt   DateTime @default(now())
+
+  encounter Encounter @relation(fields: [encounterId], references: [id], onDelete: Cascade)
+
+  @@index([encounterId, createdAt])
+}
+
 // ── RAG ──────────────────────────────────────────────────────
+
 
 /// A chunk of campaign knowledge with a pgvector embedding.
 /// Vector search happens through raw SQL (Prisma `queryRaw`),

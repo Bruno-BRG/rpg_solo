@@ -17,6 +17,7 @@ import { ThreadsPanel } from "@/components/campaign/ThreadsPanel";
 import { PartyPanel } from "@/components/campaign/PartyPanel";
 import { MemoryPanel } from "@/components/campaign/MemoryPanel";
 import { PrepPanel } from "@/components/campaign/PrepPanel";
+import { CombatPanel } from "@/components/campaign/CombatPanel";
 import { ChaosRankControl } from "@/components/campaign/ChaosRankControl";
 import { CampaignSettingsPanel, type CampaignSettings } from "@/components/campaign/CampaignSettings";
 
@@ -29,6 +30,7 @@ const TABS = [
   "Party",
   "Memory",
   "Prep",
+  "Combat",
   "Settings",
 ] as const;
 type Tab = (typeof TABS)[number];
@@ -136,6 +138,9 @@ export function Workspace(props: WorkspaceProps) {
         )}
         {tab === "Prep" && (
           <PrepPanel campaignId={props.campaignId} refreshKey={refreshKey} />
+        )}
+        {tab === "Combat" && (
+          <CombatPanel campaignId={props.campaignId} refreshKey={refreshKey} />
         )}
         {tab === "Settings" && (
           <CampaignSettingsPanel

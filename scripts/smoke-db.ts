@@ -369,6 +369,130 @@ async function main() {
     digest.prep.includes("The Drowned Bell") && digest.prep.includes("Recover the Ember Crown"),
   );
 
+  // ── Grid combat through the tool layer ───────────────────
+  const combatCtx = { campaignId: campaign.id, chaosRank: 5, sceneId: scene.id, askedBy: "ai" as const };
+  const enc = (await executeTool(
+    "start_encounter",
+    JSON.stringify({
+      name: "The Salt Docks",
+      width: 8,
+      height: 8,
+      combatants: [
+        { name: "Hero", character: "Hero", x: 1, y: 1 },
+        { name: "Thug", isExtra: true, x: 2, y: 1, parry: 2, toughness: 4 },
+      ],
+    }),
+    combatCtx,
+  )) as { encounter: { id: string; width: number }; combatants: Array<{ name: string; kind: string; parry: number }>; grid: string };
+  check("start_encounter opens a grid", enc.encounter.width === 8 && enc.grid.includes("("));
+  check(
+    "player characters link to their sheet",
+    enc.combatants.some((c) => c.name === "Hero" && c.kind === "PlayerCharacter"),
+  );
+
+  const painted = (await executeTool(
+    "set_terrain",
+    JSON.stringify({
+      cells: [
+        { x: 4, y: 0, kind: "wall" },
+        { x: 4, y: 1, kind: "wall" },
+        { x: 0, y: 4, kind: "cover" },
+        { x: 1, y: 4, kind: "difficult" },
+      ],
+    }),
+    combatCtx,
+  )) as { terrainCells: number; grid: string };
+  check("set_terrain paints the board", painted.terrainCells === 4 && painted.grid.includes("#"));
+
+  const placed = (await executeTool(
+    "place_combatant",
+    JSON.stringify({ name: "Reinforcement", x: 3, y: 3, isExtra: true, pace: 2 }),
+    combatCtx,
+  )) as { combatant: { name: string } };
+  check("place_combatant adds a piece", placed.combatant.name === "Reinforcement");
+
+  const moved = (await executeTool(
+    "combat_move",
+    JSON.stringify({ name: "Reinforcement", x: 3, y: 5 }),
+    combatCtx,
+  )) as { cost: number; allowance: number; remaining: number };
+  check("combat_move respects the Pace", moved.cost <= moved.allowance && moved.remaining === moved.allowance - moved.cost);
+
+  let blockedMove = false;
+  try {
+    await executeTool("combat_move", JSON.stringify({ name: "Reinforcement", x: 7, y: 7 }), combatCtx);
+  } catch {
+    blockedMove = true;
+  }
+  const stillThere = await prisma.combatant.findFirst({ where: { encounterId: enc.encounter.id, name: "Reinforcement" } });
+  check(
+    "a move beyond the Pace fails without moving the piece",
+    blockedMove && stillThere?.x === 3 && stillThere?.y === 5,
+    stillThere ? stillThere.x + "," + stillThere.y : "missing",
+  );
+
+  const strike = (await executeTool(
+    "attack",
+    JSON.stringify({
+      attacker: "Hero",
+      target: "Thug",
+      kind: "melee",
+      dieStep: 12,
+      weaponDice: [12],
+      strengthDie: 12,
+      situational: 6,
+    }),
+    combatCtx,
+  )) as { damage: string | null; targetState: { status: string } };
+  const thug = await prisma.combatant.findFirst({ where: { encounterId: enc.encounter.id, name: "Thug" } });
+  check("an attack on an extra takes it out", thug?.status === "Down" && !!strike.damage, strike.damage ?? "no damage");
+
+  await executeTool(
+    "attack",
+    JSON.stringify({
+      attacker: "Thug",
+      target: "Hero",
+      kind: "melee",
+      dieStep: 12,
+      weaponDice: [12],
+      strengthDie: 12,
+      situational: 6,
+    }),
+    combatCtx,
+  );
+  const heroSheet = await prisma.character.findFirst({ where: { campaignId: campaign.id, name: "Hero" } });
+  check("wounds reach the character sheet", (heroSheet?.wounds ?? 0) > 0, "wounds=" + (heroSheet?.wounds ?? 0));
+
+  const cards = (await executeTool(
+    "roll_initiative",
+    JSON.stringify({ participants: [{ name: "Hero" }, { name: "Thug" }] }),
+    combatCtx,
+  )) as { round: number; order: Array<{ name: string; card: { label: string } }>; jokerDealt: boolean };
+  const dealt = await prisma.combatant.findMany({ where: { encounterId: enc.encounter.id } });
+  check(
+    "initiative deals cards onto the pieces",
+    cards.order.length === 3 && dealt.every((c) => c.card !== null),
+    cards.order.map((o) => o.name + " " + o.card.label).join(" > "),
+  );
+
+  const status = (await executeTool("combat_status", JSON.stringify({}), combatCtx)) as {
+    initiative: unknown[];
+    terrain: { walls: number; cover: number };
+    grid: string;
+  };
+  check("combat_status reports the board", status.terrain.walls === 2 && status.initiative.length === 3);
+
+  const ended = (await executeTool(
+    "end_encounter",
+    JSON.stringify({ outcome: "The thugs scatter" }),
+    combatCtx,
+  )) as { ended: string; standing: Array<{ name: string; wounds: number }> };
+  const closed = await prisma.encounter.findUnique({ where: { id: enc.encounter.id } });
+  check("end_encounter closes the fight", ended.ended === "The Salt Docks" && closed?.status === "Ended");
+
+  const history = await prisma.encounterLog.count({ where: { encounterId: enc.encounter.id } });
+  check("the fight keeps an action history", history >= 5, history + " entries");
+
   // ── Cascade deletes ──────────────────────────────────────
   await prisma.campaign.delete({ where: { id: campaign.id } });
   const orphans = {
@@ -381,6 +505,9 @@ async function main() {
     arcs: await prisma.storyArc.count({ where: { campaignId: campaign.id } }),
     beats: await prisma.storyBeat.count({ where: { campaignId: campaign.id } }),
     clocks: await prisma.storyClock.count({ where: { campaignId: campaign.id } }),
+    encounters: await prisma.encounter.count({ where: { campaignId: campaign.id } }),
+    combatants: await prisma.combatant.count({ where: { encounter: { campaignId: campaign.id } } }),
+    encounterLogs: await prisma.encounterLog.count({ where: { encounter: { campaignId: campaign.id } } }),
   };
   check(
     "campaign delete cascades",

@@ -62,6 +62,19 @@ class FakeProvider implements AIProvider {
           { id: "t22", name: "plan_story", arguments: JSON.stringify({ section: "arcs", action: "add", name: "The Drowned Bell", goal: "Silence the bell" }) },
           { id: "t23", name: "plan_story", arguments: JSON.stringify({ section: "beats", action: "add", title: "The bell rings again", detail: "The harbour floods" }) },
           { id: "t24", name: "plan_story", arguments: JSON.stringify({ section: "clocks", action: "add", name: "Ritual completes", max: 6 }) },
+          { id: "t25", name: "start_encounter", arguments: JSON.stringify({
+            name: "Fire on the Docks",
+            width: 10,
+            height: 8,
+            combatants: [
+              { name: "Hero", character: "Hero", x: 1, y: 1 },
+              { name: "Dock Warden", npc: "Dock Warden", x: 2, y: 1, parry: 2, toughness: 4 },
+            ],
+            terrain: [{ x: 4, y: 0, kind: "wall" }, { x: 4, y: 1, kind: "wall" }, { x: 0, y: 3, kind: "cover" }],
+          }) },
+          { id: "t26", name: "roll_initiative", arguments: JSON.stringify({ participants: [{ name: "Hero" }, { name: "Dock Warden" }] }) },
+          { id: "t27", name: "attack", arguments: JSON.stringify({ attacker: "Hero", target: "Dock Warden", kind: "melee", dieStep: 12, weaponDice: [12], strengthDie: 12, situational: 6 }) },
+          { id: "t28", name: "combat_status", arguments: JSON.stringify({}) },
         ],
       };
       return;
@@ -129,7 +142,7 @@ async function main() {
 
   check("turn produced narration", result.content.includes("lifeboat"), result.content.slice(0, 60));
   check("streaming delivered deltas across tool calls", deltas.length === 3, `${deltas.length} deltas`);
-  check("all 24 tools traced", result.toolTrace.length === 24, `${result.toolTrace.length} calls`);
+  check("all 28 tools traced", result.toolTrace.length === 28, `${result.toolTrace.length} calls`);
   check("streamed text exactly matches stored narration", deltas.join("") === result.content, `stream=${deltas.join("").length}, stored=${result.content.length}`);
   check("no tool errored", !result.toolTrace.some((t) => (t.result as { error?: string })?.error),
     result.toolTrace.filter((t) => (t.result as { error?: string })?.error).map((t) => t.name).join(","));
@@ -153,6 +166,7 @@ async function main() {
       arcs: true,
       beats: true,
       clocks: true,
+      encounters: { include: { combatants: true } },
     },
   });
   if (!after) throw new Error("campaign vanished");
@@ -184,6 +198,26 @@ async function main() {
     !!closeTrace?.guidance?.includes("plan_story"),
     closeTrace?.guidance?.slice(0, 48) ?? "no guidance",
   );
+  const encounter = after.encounters[0];
+  check(
+    "the GM opened a fight on the grid",
+    !!encounter && encounter.status === "Active" && encounter.combatants.length === 2,
+    encounter ? encounter.name + " · " + encounter.combatants.length + " pieces" : "no encounter",
+  );
+  check(
+    "cards were dealt to the pieces",
+    !!encounter && encounter.combatants.every((c) => c.card !== null),
+  );
+  const warden = encounter?.combatants.find((c) => c.name === "Dock Warden");
+  check(
+    "the attack took the NPC out of the fight",
+    warden?.status === "Down",
+    warden ? warden.status + " · wounds " + warden.wounds : "missing",
+  );
+  const fightLog = encounter
+    ? await prisma.encounterLog.count({ where: { encounterId: encounter.id } })
+    : 0;
+  check("the fight was written to its history", fightLog >= 3, fightLog + " entries");
   const advanceTrace = result.toolTrace.find((t) => t.name === "advance_dramatic_task")
     ?.result as { roll?: { criticalFailure?: boolean } } | undefined;
   // A critical failure (2.8%) banks −1 token → 0; otherwise progress.
@@ -256,6 +290,12 @@ async function main() {
     "prep from turn 1 reaches the turn 2 prompt",
     systemPrompt.includes("YOUR PREP") && systemPrompt.includes("The Drowned Bell"),
   );
+  check(
+    "the grid reaches the turn 2 prompt",
+    systemPrompt.includes("ENCOUNTER ON THE GRID") &&
+      systemPrompt.includes("Fire on the Docks") &&
+      systemPrompt.includes("Dock Warden"),
+  );
 
   const turnsAfter2 = await prisma.chatTurn.count({ where: { campaignId: campaign.id } });
   check("turn 2 persisted too", turnsAfter2 === 4, `${turnsAfter2} turns`);
@@ -306,6 +346,34 @@ async function main() {
   check("provider failure is recorded on assistant turn", partialResult.status === "failed" && partialState?.chatTurns[0]?.status === "failed");
   check("failed narration exactly matches persisted text", partialState?.chatTurns[0]?.content === partialResult.content && partialResult.content.includes("scripted provider interruption"));
   check("failed turn stream exactly matches persisted text", partialDeltas.join("") === partialResult.content);
+
+  // A move the rules refuse must fail the turn without moving the piece.
+  const slowMove = new FailureProvider([
+    {
+      id: "s1",
+      name: "start_encounter",
+      arguments: JSON.stringify({
+        name: "Slow Fight",
+        width: 10,
+        height: 10,
+        combatants: [{ name: "Sluggish", x: 0, y: 0, pace: 2, isExtra: true }],
+      }),
+    },
+    {
+      id: "s2",
+      name: "combat_move",
+      arguments: JSON.stringify({ name: "Sluggish", x: 9, y: 9 }),
+    },
+  ]);
+  const slowResult = await runGmTurn(slowMove, user.id, failureCampaign.id, "The sluggish thing charges.");
+  const sluggish = await prisma.combatant.findFirst({
+    where: { encounter: { campaignId: failureCampaign.id }, name: "Sluggish" },
+  });
+  check(
+    "a move beyond the Pace fails the turn without moving the piece",
+    slowResult.status === "failed" && sluggish?.x === 0 && sluggish?.y === 0,
+    slowResult.status + " at " + (sluggish ? sluggish.x + "," + sluggish.y : "missing"),
+  );
 }
 
 main()

@@ -31,9 +31,14 @@ export function rankIndex(rank: string): number {
 /** Advances required to reach each rank (0, 4, 8, 12, 16, 20). */
 export const RANK_ADVANCES = [0, 4, 8, 12, 16, 20] as const;
 
-/** Maximum die step for skills at a given rank (d6 until Seasoned). */
+/**
+ * Maximum die step a skill may reach at a given rank.
+ *
+ * Skills cap at d12 for the whole Novice-to-Heroic run; only Legendary
+ * characters may push a skill past d12 (d12+1, d12+2).
+ */
 export function maxSkillStep(rank: string): number {
-  return rankIndex(rank) < 1 ? 6 : 12;
+  return rankIndex(rank) >= 4 ? 14 : 12;
 }
 
 /** Core skills every character starts with at d4. */

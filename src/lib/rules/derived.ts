@@ -50,10 +50,21 @@ export function deriveStats(stats: StatBlock): DerivedStats {
   };
 }
 
-/** Load limit from Strength step: d4=5 … d12=60 (step × 5). */
+/**
+ * Load limit from Strength: 20 lb at d4 and +20 lb per die step, so
+ * d6 is 40, d8 60, d10 80 and d12 100. A +1 Strength modifier adds 20.
+ */
+const LOAD_LIMIT_BY_STEP: Record<number, number> = {
+  4: 20,
+  6: 40,
+  8: 60,
+  10: 80,
+  12: 100,
+};
+
 function dieSidesToLoad(strength: number): number {
   const sides = strength === 3 ? 4 : strength;
-  return sides * 5;
+  return LOAD_LIMIT_BY_STEP[sides] ?? sides * 10;
 }
 
 /** Wounds incurred check: is the character incapacitated? */

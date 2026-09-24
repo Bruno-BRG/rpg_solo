@@ -8,8 +8,10 @@ A solo RPG platform: **Savage Worlds** rules engine, the **Mythic GM Emulator** 
 |---|---|
 | **AI Game Master** | Streaming GM chat that narrates, rolls dice, consults the oracle and manages the story via tool calling. Opens the adventure with narration on demand. Persists full chat history, replays it on reload and logs every AI oracle consultation. Narration renders as **markdown** (headings, lists, tables, bold). |
 | **Dark theme** | Full dark mode with one click in the sidebar (follows system preference by default, persisted per browser, no flash on load). |
-| **Savage Worlds engine** | Trait rolls with wild die and acing, derived stats (Pace/Parry/Toughness), ranks, guided character creation. |
-| **Combat** | Initiative deck (d6+d6 with jokers), attack vs Parry, damage vs Toughness (incl. extras), raises → +1d6 damage, Soak, Unshake. |
+| **Savage Worlds engine** | Trait rolls with wild die and acing, derived stats (Pace/Parry/Toughness), ranks. Skills cap at d12 until Legendary; load limit is 20 lb per Strength step. |
+| **Guided character creation** | Five steps with a live guide: 5 attribute points, 12 skill points, core skills free at d4, 1 free Edge, up to 4 points of Hindrances buying an Edge (2), an attribute step (2) or a skill step (1). Every option shows its cost, blocked options say why, and the API refuses an illegal sheet with the reasons. |
+| **Combat** | Initiative from the Action Deck (54 cards, suit tiebreak, Joker acts anytime at +2 and forces a reshuffle), attack vs Parry, damage vs Toughness (incl. extras), raises → +1d6 damage, Soak (a Benny, Vigor at TN 4: a success soaks one wound, each raise another), Unshake. |
+| **Grid combat** | Tactical encounters on a square grid: the GM opens the fight, paints walls, cover, difficult ground and hazards, places pieces and deals cards; distance, line of sight, cover, gang up, range bands, multi-action and wound penalties are all applied. The Combat tab shows the board, initiative with cards, the selected piece, range to a target and the action history, and the player can move pieces, fix wounds and paint terrain. |
 | **Dramatic tasks** | SWADE timer with skill list, tokens per success/raise, round advancement, success/failure outcomes. |
 | **Interludes** | Mythic interlude questions per PC + world outlook check with chaos-rank drift; awards a benny. |
 | **Progression** | XP → advances → ranks (Novice → Legendary at 4/8/12/16), per-character XP tracking in the party panel. |
@@ -22,7 +24,7 @@ A solo RPG platform: **Savage Worlds** rules engine, the **Mythic GM Emulator** 
 | **Multi-user auth** | Email + password accounts (Auth.js, bcrypt, JWT sessions). |
 | **Per-campaign AI settings** | Model, GM style/persona and narrative temperature per campaign (fall back to user defaults); campaigns can be deleted with typed confirmation. |
 | **AI providers** | OpenAI API (official) or ChatGPT Plus subscription via Codex-style OAuth. |
-| **Test suite** | `npm run test` covers rules, tools, DB and a full GM loop with a fake provider (including the knowledge digest, fact capture and prep persistence); `npm run test:api` runs the HTTP end-to-end suite. |
+| **Test suite** | `npm run test` covers rules, tools, DB and a full GM loop with a fake provider (knowledge digest, fact capture, prep, creation budgets, the card deck and grid combat); `npm run test:api` runs the HTTP end-to-end suite. |
 
 ## Stack
 
@@ -151,6 +153,9 @@ npm run test:api    # HTTP end-to-end (needs `npm run dev` running)
 - [x] Character progression (XP → advances → ranks) with party panel
 - [x] Genre NPC generator + built-in d100 table library
 - [x] Full chat history persistence and replay
+- [x] Guided character creation with enforced SWADE budgets
+- [x] Grid combat with the official Action Deck
+- [x] Campaign knowledge notebook (facts) and GM prep (arcs, events, clocks, agendas)
 - [ ] PDF rules ingestion for RAG
 - [ ] Export journal as markdown/EPUB
 - [ ] Vehicle/chase rules (SWADE chase deck)

@@ -18,10 +18,38 @@
 import { z } from "zod";
 import { rollTrait, rollPlain } from "../rules/dice";
 import {
+  attackModifiers,
+  attackRoll,
+  blocksMovement,
+  cardScore,
+  cellKey,
+  coverPenalty,
+  createActionDeck,
   damageRoll,
+  dealRound,
+  DEFEND_PARRY_BONUS,
+  distanceSquares,
+  isAdjacent,
+  lineOfSight,
+  movementAllowance,
+  reachableCells,
   rollInitiative,
   summarizeDamage,
+  terrainAt,
+  WILD_ATTACK_BONUS,
+  type DamageResult,
 } from "../rules/combat";
+import { deriveStats } from "../rules/derived";
+import {
+  cardFromJson,
+  deckFromJson,
+  getActiveEncounter,
+  logEncounter,
+  renderEncounterForPrompt,
+  renderGrid,
+  syncCombatantToSheet,
+  terrainFromJson,
+} from "../gm/encounter";
 import {
   advanceTaskRound,
   applyTaskRoll,
@@ -259,6 +287,116 @@ const planStorySchema = z.object({
     .describe("Name/title fragment identifying the item (action=update|remove)"),
 });
 
+// ── Tactical encounters ──────────────────────────────────────
+
+const terrainCellSchema = z.object({
+  x: z.number().int().min(0).max(60),
+  y: z.number().int().min(0).max(60),
+  kind: z.enum(["wall", "cover", "difficult", "hazard"]),
+  label: z.string().max(80).optional(),
+});
+
+const combatantSpecSchema = z.object({
+  name: z.string().min(1).max(80),
+  kind: z.enum(["PlayerCharacter", "StoryCharacter", "Extra"]).optional(),
+  character: z
+    .string()
+    .max(80)
+    .optional()
+    .describe("Player character sheet to link, by name (stats are read from it)"),
+  npc: z.string().max(80).optional().describe("Story character to link, by name"),
+  x: z.number().int().min(0).max(60),
+  y: z.number().int().min(0).max(60),
+  pace: z.number().int().min(1).max(30).optional(),
+  parry: z.number().int().min(1).max(20).optional(),
+  toughness: z.number().int().min(1).max(30).optional(),
+  wounds: z.number().int().min(0).max(10).optional(),
+  maxWounds: z.number().int().min(1).max(10).optional(),
+  shaken: z.boolean().optional(),
+  bennies: z.number().int().min(0).max(10).optional(),
+  isExtra: z.boolean().optional().describe("Extras are taken out by a single wound"),
+  size: z.number().int().min(1).max(4).optional(),
+  notes: z.string().max(500).optional(),
+});
+
+const startEncounterSchema = z.object({
+  name: z.string().min(1).max(120).describe("What this fight is"),
+  width: z.number().int().min(4).max(60).default(12),
+  height: z.number().int().min(4).max(60).default(12),
+  combatants: z.array(combatantSpecSchema).max(30).optional(),
+  terrain: z.array(terrainCellSchema).max(600).optional(),
+  notes: z.string().max(1000).optional(),
+});
+
+const setTerrainSchema = z.object({
+  cells: z.array(terrainCellSchema).min(1).max(600).describe("Terrain cells to paint"),
+  clear: z.boolean().default(false).describe("True to erase those cells instead of painting"),
+});
+
+const placeCombatantSchema = combatantSpecSchema;
+
+const combatMoveSchema = z.object({
+  name: z.string().min(1).max(80),
+  x: z.number().int().min(0).max(60),
+  y: z.number().int().min(0).max(60),
+  runningRoll: z
+    .number()
+    .int()
+    .min(0)
+    .max(6)
+    .default(0)
+    .describe("The running die result, when the character sprints"),
+});
+
+const attackSchema = z.object({
+  attacker: z.string().min(1).max(80),
+  target: z.string().min(1).max(80),
+  kind: z.enum(["melee", "ranged"]).default("melee"),
+  dieStep: z
+    .number()
+    .int()
+    .min(4)
+    .max(12)
+    .optional()
+    .describe("Attack die; defaults to the sheet Fighting or Shooting, else d6"),
+  weaponDice: z
+    .array(z.number().int().min(4).max(12))
+    .max(6)
+    .optional()
+    .describe("Damage dice of the weapon, e.g. [8] for a d8 weapon"),
+  strengthDie: z
+    .number()
+    .int()
+    .min(4)
+    .max(12)
+    .optional()
+    .describe("Strength die added to melee damage"),
+  toughness: z.number().int().min(1).max(30).optional().describe("Override the target Toughness"),
+  ranges: z
+    .object({
+      short: z.number().int().min(1).max(60),
+      medium: z.number().int().min(1).max(60),
+      long: z.number().int().min(1).max(60),
+      extreme: z.number().int().min(1).max(60),
+    })
+    .optional()
+    .describe("Weapon reach per band, in squares"),
+  wildAttack: z.boolean().optional(),
+  aim: z.boolean().optional(),
+  running: z.boolean().optional(),
+  extraActions: z.number().int().min(0).max(3).optional(),
+  situational: z.number().int().min(-6).max(6).optional(),
+  ignoreCover: z.boolean().optional(),
+});
+
+const combatStatusSchema = z.object({
+  includeGrid: z.boolean().default(true),
+});
+
+const endEncounterSchema = z.object({
+  outcome: z.string().max(300).optional().describe("How the fight ended, for the log"),
+});
+
 /** Map of tool name → Zod schema. */
 export const TOOL_SCHEMAS = {
   roll_dice: rollDiceSchema,
@@ -283,6 +421,13 @@ export const TOOL_SCHEMAS = {
   update_character: updateCharacterSchema,
   remember_facts: rememberFactsSchema,
   plan_story: planStorySchema,
+  start_encounter: startEncounterSchema,
+  set_terrain: setTerrainSchema,
+  place_combatant: placeCombatantSchema,
+  combat_move: combatMoveSchema,
+  attack: attackSchema,
+  combat_status: combatStatusSchema,
+  end_encounter: endEncounterSchema,
 } as const;
 
 export type ToolName = keyof typeof TOOL_SCHEMAS;
@@ -344,6 +489,20 @@ const TOOL_DESCRIPTIONS: Record<ToolName, string> = {
     "Record the durable facts of the campaign so you never forget or contradict them: names, places, factions, items, promises made, rulings you gave, mysteries opened. Add facts as they are established; update a fact when the truth changes; archive one that turned out wrong. Facts stay in your memory every turn.",
   plan_story:
     "Your prep notebook. Manage arcs (the long storylines), beats (the next events you are preparing), tension clocks (pressure that builds) and NPC agendas (what each character wants and is doing). Prepare ahead like a table GM: keep two to four beats ready, tick clocks when the fiction moves, and rewrite anything the oracle or the player's choices invalidate.",
+  start_encounter:
+    "Open a tactical fight on a square grid. Set the size, place the combatants (link player characters by name so their Parry, Toughness, wounds and bennies come from the sheet) and paint walls and obstacles that match your description of the battlefield. One encounter is active per campaign.",
+  set_terrain:
+    "Paint or erase terrain on the current grid: walls block movement and line of sight, cover gives -2 (or -4 when heavily obstructed), difficult ground and hazards cost double movement. Use it to keep the board matching what you narrated.",
+  place_combatant:
+    "Add a piece to the current fight — reinforcements, a summoned creature, an extra the player just spotted. Player characters linked by name take their stats from the sheet.",
+  combat_move:
+    "Move a combatant to a square. Movement is limited by the character Pace (plus the running die when sprinting) and blocked by walls and occupied squares; the result reports the cost and what is left.",
+  attack:
+    "Resolve an attack on the grid: distance and range band, cover, gang up, wild attack, aiming, multiple actions and wound penalties are applied for you, then damage is rolled against Toughness and wounds and Shaken are written to the target (and to the sheet of a linked player character).",
+  combat_status:
+    "Read the current fight: round, initiative order with cards, every combatant with position and condition, terrain and the grid itself. Use it before narrating so your description matches the board.",
+  end_encounter:
+    "Close the fight, record the outcome in the log and stop tracking the grid. Wounds and Shaken already sit on the sheets.",
 };
 
 /** Context passed to tool executors. */
@@ -385,6 +544,54 @@ export async function executeTool(
     }
     case "roll_initiative": {
       const a = args as z.infer<typeof rollInitiativeSchema>;
+      const encounter = await getActiveEncounter(ctx.campaignId);
+      // On the grid the Action Deck belongs to the encounter: deal to its
+      // combatants, persist each card and keep the deck for the next round.
+      if (encounter) {
+        const dealt = dealRound(
+          encounter.combatants.map((c) => ({
+            name: c.name,
+            actor: c.isExtra ? ("extra" as const) : ("wildcard" as const),
+          })),
+          deckFromJson(encounter.deck),
+        );
+        for (const entry of dealt.order) {
+          const combatant = encounter.combatants.find((c) => c.name === entry.name);
+          if (combatant) {
+            await prisma.combatant.update({
+              where: { id: combatant.id },
+              data: { card: entry.card as unknown as object },
+            });
+          }
+        }
+        const history = Array.isArray(encounter.rounds) ? encounter.rounds : [];
+        await prisma.encounter.update({
+          where: { id: encounter.id },
+          data: {
+            deck: dealt.deck as unknown as object[],
+            rounds: [
+              ...history,
+              {
+                round: encounter.round,
+                order: dealt.order.map((e) => ({ name: e.name, card: e.card })),
+              },
+            ] as unknown as object[],
+          },
+        });
+        await logEncounter(
+          encounter.id,
+          encounter.round,
+          "Card",
+          "Initiative: " + dealt.order.map((e) => e.name + " " + e.card.label).join(" > "),
+        );
+        return {
+          round: encounter.round,
+          order: dealt.order,
+          jokerDealt: dealt.jokerDealt,
+          reshuffled: dealt.reshuffled,
+          grid: renderGrid(encounter, encounter.combatants),
+        };
+      }
       const order = rollInitiative(
         a.participants.map((p) => ({ name: p.name, actor: p.actor ?? "extra" })),
       );
@@ -543,6 +750,27 @@ export async function executeTool(
     }
     case "plan_story": {
       return await planStory(args as z.infer<typeof planStorySchema>, ctx);
+    }
+    case "start_encounter": {
+      return await startEncounter(args as z.infer<typeof startEncounterSchema>, ctx);
+    }
+    case "set_terrain": {
+      return await setTerrain(args as z.infer<typeof setTerrainSchema>, ctx);
+    }
+    case "place_combatant": {
+      return await placeCombatant(args as z.infer<typeof placeCombatantSchema>, ctx);
+    }
+    case "combat_move": {
+      return await combatMove(args as z.infer<typeof combatMoveSchema>, ctx);
+    }
+    case "attack": {
+      return await resolveAttack(args as z.infer<typeof attackSchema>, ctx);
+    }
+    case "combat_status": {
+      return await combatStatus(args as z.infer<typeof combatStatusSchema>, ctx);
+    }
+    case "end_encounter": {
+      return await endEncounter(args as z.infer<typeof endEncounterSchema>, ctx);
     }
     case "update_threads":
     case "update_cast":
@@ -1032,4 +1260,495 @@ function zodFieldToJson(field: z.ZodTypeAny): {
     default:
       return { schema: { type: "string" }, required: !isOptional };
   }
+}
+
+// ── Tactical encounters (grid combat) ────────────────────────
+
+/** The active encounter, or a clear error for the model to recover from. */
+async function requireEncounter(campaignId: string) {
+  const encounter = await getActiveEncounter(campaignId);
+  if (!encounter) {
+    throw new Error("No active encounter. Open one with start_encounter first.");
+  }
+  return encounter;
+}
+
+/** Resolve one combatant by name fragment. */
+function findCombatant<T extends { name: string }>(combatants: T[], name: string): T {
+  const needle = normalizeFactText(name);
+  if (!needle) throw new Error("Provide a combatant name");
+  const hits = combatants.filter((c) => normalizeFactText(c.name).includes(needle));
+  if (hits.length === 0) throw new Error("No combatant named \"" + name + "\" in this encounter");
+  if (hits.length > 1) {
+    throw new Error("Multiple combatants match \"" + name + "\" — use the full name");
+  }
+  return hits[0];
+}
+
+/** Turn a spec into a row, pulling stats from a linked sheet when given. */
+async function createCombatantRow(
+  encounterId: string,
+  campaignId: string,
+  spec: z.infer<typeof combatantSpecSchema>,
+) {
+  let kind = spec.kind ?? "Extra";
+  let characterId: string | null = null;
+  let storyCharacterId: string | null = null;
+  let pace = spec.pace ?? 6;
+  let parry = spec.parry ?? 2;
+  let toughness = spec.toughness ?? 4;
+  let wounds = spec.wounds ?? 0;
+  let bennies = spec.bennies ?? 0;
+  let shaken = spec.shaken ?? false;
+  let isExtra = spec.isExtra ?? kind === "Extra";
+
+  const sheetName = spec.character ?? (kind === "PlayerCharacter" ? spec.name : undefined);
+  if (sheetName) {
+    const character = await prisma.character.findFirst({
+      where: { campaignId, name: { equals: sheetName, mode: "insensitive" } },
+    });
+    if (character) {
+      const stats = deriveStats({
+        vigor: character.vigor,
+        smarts: character.smarts,
+        strength: character.strength,
+        rank: character.rank,
+        skills: (character.skills ?? {}) as Record<string, number>,
+      });
+      kind = "PlayerCharacter";
+      characterId = character.id;
+      isExtra = false;
+      pace = spec.pace ?? stats.pace;
+      parry = spec.parry ?? stats.parry;
+      toughness = spec.toughness ?? stats.toughness;
+      wounds = spec.wounds ?? character.wounds;
+      bennies = spec.bennies ?? character.bennies;
+      shaken = spec.shaken ?? character.shaken;
+    }
+  }
+
+  const npcName = spec.npc ?? (kind === "StoryCharacter" ? spec.name : undefined);
+  if (npcName) {
+    const npc = await prisma.storyCharacter.findFirst({
+      where: { campaignId, name: { equals: npcName, mode: "insensitive" } },
+    });
+    if (npc) {
+      storyCharacterId = npc.id;
+      kind = "StoryCharacter";
+    }
+  }
+
+  return prisma.combatant.create({
+    data: {
+      encounterId,
+      name: spec.name,
+      kind,
+      characterId,
+      storyCharacterId,
+      x: spec.x,
+      y: spec.y,
+      size: spec.size ?? 1,
+      pace,
+      parry,
+      toughness,
+      wounds,
+      maxWounds: spec.maxWounds ?? 3,
+      shaken,
+      bennies,
+      isExtra,
+      notes: spec.notes ?? null,
+    },
+  });
+}
+
+/** Stored shape of a terrain cell. */
+function normalizeTerrain(cells: Array<z.infer<typeof terrainCellSchema>>) {
+  return cells.map((cell) => ({
+    x: cell.x,
+    y: cell.y,
+    kind: cell.kind,
+    label: cell.label ?? null,
+  }));
+}
+
+/** Render a board for a tool result. */
+function board(
+  encounter: { width: number; height: number; terrain: unknown },
+  combatants: Parameters<typeof renderGrid>[1],
+) {
+  return renderGrid(encounter, combatants);
+}
+
+async function startEncounter(a: z.infer<typeof startEncounterSchema>, ctx: ToolContext) {
+  const existing = await getActiveEncounter(ctx.campaignId);
+  if (existing) {
+    await prisma.encounter.update({ where: { id: existing.id }, data: { status: "Ended" } });
+    await logEncounter(existing.id, existing.round, "Note", "Closed to start " + a.name + ".");
+  }
+
+  const encounter = await prisma.encounter.create({
+    data: {
+      campaignId: ctx.campaignId,
+      sceneId: ctx.sceneId ?? null,
+      name: a.name,
+      status: "Active",
+      width: a.width,
+      height: a.height,
+      terrain: normalizeTerrain(a.terrain ?? []),
+      deck: createActionDeck() as unknown as object[],
+      rounds: [],
+    },
+  });
+
+  const placed = [];
+  for (const spec of a.combatants ?? []) {
+    placed.push(await createCombatantRow(encounter.id, ctx.campaignId, spec));
+  }
+
+  await logEncounter(
+    encounter.id,
+    1,
+    "Note",
+    "Encounter started: " + a.name + (a.notes ? " — " + a.notes : ""),
+  );
+
+  return {
+    encounter: {
+      id: encounter.id,
+      name: encounter.name,
+      width: encounter.width,
+      height: encounter.height,
+      round: encounter.round,
+    },
+    combatants: placed.map((c) => ({
+      name: c.name,
+      kind: c.kind,
+      x: c.x,
+      y: c.y,
+      parry: c.parry,
+      toughness: c.toughness,
+      pace: c.pace,
+      wounds: c.wounds,
+      shaken: c.shaken,
+      isExtra: c.isExtra,
+    })),
+    grid: board(encounter, placed),
+    guidance:
+      "Deal initiative with roll_initiative, then narrate. Walls block sight and movement; cover gives -2 or -4.",
+  };
+}
+
+async function setTerrain(a: z.infer<typeof setTerrainSchema>, ctx: ToolContext) {
+  const encounter = await requireEncounter(ctx.campaignId);
+  const map = new Map(terrainFromJson(encounter.terrain).map((cell) => [cellKey(cell.x, cell.y), cell]));
+  for (const cell of a.cells) {
+    const key = cellKey(cell.x, cell.y);
+    if (a.clear) map.delete(key);
+    else map.set(key, { x: cell.x, y: cell.y, kind: cell.kind, label: cell.label ?? null });
+  }
+  const next = Array.from(map.values());
+  await prisma.encounter.update({
+    where: { id: encounter.id },
+    data: { terrain: next as unknown as object[] },
+  });
+  await logEncounter(
+    encounter.id,
+    encounter.round,
+    "Terrain",
+    (a.clear ? "Cleared " : "Painted ") + a.cells.length + " terrain cell(s).",
+  );
+  return {
+    terrainCells: next.length,
+    grid: board({ ...encounter, terrain: next }, encounter.combatants),
+  };
+}
+
+async function placeCombatant(a: z.infer<typeof placeCombatantSchema>, ctx: ToolContext) {
+  const encounter = await requireEncounter(ctx.campaignId);
+  const terrain = terrainFromJson(encounter.terrain);
+  const here = terrainAt(terrain, a.x, a.y);
+  if (here && blocksMovement(here.kind)) {
+    throw new Error("(" + a.x + "," + a.y + ") is a wall — pick an open square");
+  }
+  const occupants = await prisma.combatant.findMany({ where: { encounterId: encounter.id } });
+  if (occupants.some((c) => c.x === a.x && c.y === a.y)) {
+    throw new Error("(" + a.x + "," + a.y + ") is already occupied");
+  }
+  const row = await createCombatantRow(encounter.id, ctx.campaignId, a);
+  await logEncounter(
+    encounter.id,
+    encounter.round,
+    "Note",
+    row.name + " joins the fight at (" + a.x + "," + a.y + ").",
+  );
+  const all = await prisma.combatant.findMany({
+    where: { encounterId: encounter.id },
+    orderBy: { createdAt: "asc" },
+  });
+  return {
+    combatant: { name: row.name, x: row.x, y: row.y, parry: row.parry, toughness: row.toughness },
+    grid: board(encounter, all),
+  };
+}
+
+async function combatMove(a: z.infer<typeof combatMoveSchema>, ctx: ToolContext) {
+  const encounter = await requireEncounter(ctx.campaignId);
+  const mover = findCombatant(encounter.combatants, a.name);
+  if (mover.status !== "Active") throw new Error(mover.name + " is " + mover.status);
+
+  const terrain = terrainFromJson(encounter.terrain);
+  const occupied = encounter.combatants
+    .filter((c) => c.id !== mover.id)
+    .map((c) => ({ x: c.x, y: c.y }));
+  const allowance = movementAllowance(mover.pace, a.runningRoll);
+  const reach = reachableCells(
+    { x: mover.x, y: mover.y },
+    terrain,
+    allowance,
+    encounter.width,
+    encounter.height,
+    occupied,
+  );
+  const cost = reach.get(cellKey(a.x, a.y));
+  if (cost === undefined) {
+    const options = Array.from(reach.keys()).filter((key) => key !== cellKey(mover.x, mover.y)).length;
+    throw new Error(
+      mover.name + " cannot reach (" + a.x + "," + a.y + ") with " + allowance +
+        " squares of movement; " + options + " squares are reachable.",
+    );
+  }
+
+  await prisma.combatant.update({ where: { id: mover.id }, data: { x: a.x, y: a.y } });
+  await logEncounter(
+    encounter.id,
+    encounter.round,
+    "Move",
+    mover.name + " moves to (" + a.x + "," + a.y + ") — " + cost + "/" + allowance + " squares.",
+  );
+  const all = await prisma.combatant.findMany({ where: { encounterId: encounter.id } });
+  return {
+    name: mover.name,
+    from: { x: mover.x, y: mover.y },
+    to: { x: a.x, y: a.y },
+    cost,
+    allowance,
+    remaining: allowance - cost,
+    grid: board(encounter, all),
+  };
+}
+
+/** The attack die for a combatant: the sheet skill when known, else d6. */
+async function attackDieFor(
+  combatant: { characterId: string | null },
+  kind: "melee" | "ranged",
+): Promise<number> {
+  if (combatant.characterId) {
+    const character = await prisma.character.findUnique({ where: { id: combatant.characterId } });
+    if (character) {
+      const skills = (character.skills ?? {}) as Record<string, number>;
+      const step = kind === "melee" ? skills["Fighting"] : skills["Shooting"];
+      if (step) return step;
+    }
+  }
+  return 6;
+}
+
+async function resolveAttack(a: z.infer<typeof attackSchema>, ctx: ToolContext) {
+  const encounter = await requireEncounter(ctx.campaignId);
+  const attacker = findCombatant(encounter.combatants, a.attacker);
+  const target = findCombatant(encounter.combatants, a.target);
+  if (attacker.id === target.id) throw new Error("A combatant cannot attack itself");
+  if (target.status !== "Active") throw new Error(target.name + " is already " + target.status);
+
+  const terrain = terrainFromJson(encounter.terrain);
+  const distance = distanceSquares(attacker, target);
+  const sight = lineOfSight(attacker, target, terrain);
+  if (!sight.clear && sight.blocker) {
+    throw new Error(
+      "Line of sight to " + target.name + " is blocked by a wall at (" +
+        sight.blocker.x + "," + sight.blocker.y + ")",
+    );
+  }
+
+  const cover = a.ignoreCover ? 0 : coverPenalty(attacker, target, terrain);
+  const attackersOnTarget = encounter.combatants.filter(
+    (c) => c.id === attacker.id || (c.status === "Active" && isAdjacent(c, target)),
+  ).length;
+  const attackerCard = cardFromJson(attacker.card);
+  const joker = attackerCard ? attackerCard.joker : false;
+
+  const modifiers = attackModifiers({
+    distance,
+    melee: a.kind === "melee",
+    ranges: a.ranges,
+    gangUp: attackersOnTarget,
+    cover,
+    wildAttack: a.wildAttack,
+    running: a.running,
+    extraActions: a.extraActions,
+    aim: a.aim,
+    joker,
+    wounds: attacker.wounds,
+    situational: a.situational,
+  });
+  if (modifiers.outOfRange) {
+    throw new Error(target.name + " is out of range at " + distance + " squares");
+  }
+
+  const dieStep = a.dieStep ?? (await attackDieFor(attacker, a.kind));
+  const defending = a.kind === "melee" && target.defending ? DEFEND_PARRY_BONUS : 0;
+  const targetNumber = a.kind === "melee" ? target.parry + defending : 4;
+  const roll = attackRoll(dieStep, targetNumber, modifiers.total);
+
+  let damage: DamageResult | null = null;
+  let damageText: string | null = null;
+  let nextWounds = target.wounds;
+  let nextShaken = target.shaken;
+  let nextStatus = target.status;
+
+  if (roll.hit) {
+    const weaponDice = a.weaponDice && a.weaponDice.length ? a.weaponDice : [6];
+    const dice = a.kind === "melee" ? [a.strengthDie ?? 6, ...weaponDice] : weaponDice;
+    const damageModifier = (a.wildAttack ? WILD_ATTACK_BONUS : 0) + (joker ? 2 : 0);
+    damage = damageRoll(dice, roll.raises, a.toughness ?? target.toughness, {
+      isExtra: target.isExtra,
+      modifier: damageModifier,
+    });
+    damageText = summarizeDamage(damage);
+
+    nextWounds = Math.min(target.maxWounds, target.wounds + damage.wounds);
+    nextShaken = damage.shaken ? true : target.shaken;
+    const incapacitated = target.isExtra
+      ? damage.shaken
+      : target.wounds + damage.wounds > target.maxWounds;
+    if (incapacitated) nextStatus = "Down";
+
+    await prisma.combatant.update({
+      where: { id: target.id },
+      data: { wounds: nextWounds, shaken: nextShaken, status: nextStatus },
+    });
+    await syncCombatantToSheet({
+      characterId: target.characterId,
+      wounds: nextWounds,
+      shaken: nextShaken,
+      bennies: target.bennies,
+    });
+  }
+
+  await logEncounter(
+    encounter.id,
+    encounter.round,
+    roll.hit ? "Attack" : "Miss",
+    attacker.name + " attacks " + target.name + " at " + distance + " squares — " +
+      roll.label + " vs " + targetNumber + " (" + modifiers.total + ") → " +
+      (roll.hit ? "hit" : "miss") +
+      (roll.raises ? " with " + roll.raises + " raise(s)" : "") +
+      (damageText ? " · " + damageText : "") +
+      (nextStatus !== "Active" ? " · " + target.name + " is " + nextStatus : ""),
+    { modifiers: modifiers.parts, roll, damage },
+  );
+
+  const all = await prisma.combatant.findMany({ where: { encounterId: encounter.id } });
+  return {
+    attacker: attacker.name,
+    target: target.name,
+    distance,
+    cover,
+    gangUp: attackersOnTarget,
+    modifiers: modifiers.parts,
+    modifierTotal: modifiers.total,
+    targetNumber,
+    roll: { total: roll.total, raises: roll.raises, success: roll.success, label: roll.label },
+    damage: damageText,
+    targetState: {
+      wounds: nextWounds,
+      maxWounds: target.maxWounds,
+      shaken: nextShaken,
+      status: nextStatus,
+    },
+    grid: board(encounter, all),
+  };
+}
+
+async function combatStatus(a: z.infer<typeof combatStatusSchema>, ctx: ToolContext) {
+  const encounter = await requireEncounter(ctx.campaignId);
+  const terrain = terrainFromJson(encounter.terrain);
+  const log = await prisma.encounterLog.findMany({
+    where: { encounterId: encounter.id },
+    orderBy: { createdAt: "desc" },
+    take: 10,
+  });
+
+  const order = encounter.combatants
+    .map((c) => ({ name: c.name, card: cardFromJson(c.card) }))
+    .filter((entry) => entry.card)
+    .sort((x, y) => cardScore(y.card!) - cardScore(x.card!))
+    .map((entry) => ({ name: entry.name, card: entry.card!.label, joker: entry.card!.joker }));
+
+  return {
+    encounter: {
+      id: encounter.id,
+      name: encounter.name,
+      round: encounter.round,
+      width: encounter.width,
+      height: encounter.height,
+      status: encounter.status,
+    },
+    initiative: order,
+    combatants: encounter.combatants.map((c) => ({
+      name: c.name,
+      kind: c.kind,
+      x: c.x,
+      y: c.y,
+      parry: c.parry,
+      toughness: c.toughness,
+      pace: c.pace,
+      wounds: c.wounds,
+      maxWounds: c.maxWounds,
+      shaken: c.shaken,
+      bennies: c.bennies,
+      isExtra: c.isExtra,
+      status: c.status,
+      card: cardFromJson(c.card)?.label ?? null,
+    })),
+    terrain: {
+      walls: terrain.filter((c) => c.kind === "wall").length,
+      cover: terrain.filter((c) => c.kind === "cover").length,
+      difficult: terrain.filter((c) => c.kind === "difficult").length,
+      hazard: terrain.filter((c) => c.kind === "hazard").length,
+    },
+    recent: log.reverse().map((entry) => "R" + entry.round + " " + entry.text),
+    grid: a.includeGrid ? board(encounter, encounter.combatants) : null,
+  };
+}
+
+async function endEncounter(a: z.infer<typeof endEncounterSchema>, ctx: ToolContext) {
+  const encounter = await requireEncounter(ctx.campaignId);
+  for (const combatant of encounter.combatants) {
+    await syncCombatantToSheet({
+      characterId: combatant.characterId,
+      wounds: combatant.wounds,
+      shaken: combatant.shaken,
+      bennies: combatant.bennies,
+    });
+  }
+  await prisma.encounter.update({ where: { id: encounter.id }, data: { status: "Ended" } });
+  await logEncounter(
+    encounter.id,
+    encounter.round,
+    "Note",
+    "Encounter ended" + (a.outcome ? ": " + a.outcome : "."),
+  );
+  return {
+    ended: encounter.name,
+    round: encounter.round,
+    outcome: a.outcome ?? null,
+    standing: encounter.combatants.map((c) => ({
+      name: c.name,
+      wounds: c.wounds,
+      shaken: c.shaken,
+      status: c.status,
+    })),
+    summary: renderEncounterForPrompt(encounter, encounter.combatants),
+  };
 }

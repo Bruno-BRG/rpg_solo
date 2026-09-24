@@ -6,6 +6,7 @@ import { z } from "zod";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { prisma } from "@/lib/db";
+import { validateCreation } from "@/lib/rules/creation";
 
 type Params = { params: { id: string } };
 
@@ -108,6 +109,27 @@ export async function POST(request: Request, { params }: Params) {
 
   const parsed = CharacterInput.safeParse(await request.json().catch(() => null));
   if (!parsed.success) return NextResponse.json({ error: "Invalid input" }, { status: 400 });
+
+  // Creation budgets are enforced here too, so an illegal sheet cannot
+  // be written even if it never went through the guided creator.
+  const report = validateCreation({
+    attributes: {
+      agility: parsed.data.agility,
+      smarts: parsed.data.smarts,
+      spirit: parsed.data.spirit,
+      strength: parsed.data.strength,
+      vigor: parsed.data.vigor,
+    },
+    skills: parsed.data.skills,
+    edges: parsed.data.edges,
+    hindrances: parsed.data.hindrances,
+  });
+  if (!report.valid) {
+    return NextResponse.json(
+      { error: "Illegal character sheet", details: report.errors },
+      { status: 400 },
+    );
+  }
 
   const character = await prisma.character.create({
     data: { ...parsed.data, campaignId: params.id },
